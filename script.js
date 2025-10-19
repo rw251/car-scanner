@@ -1,4 +1,5 @@
 const controlButton = document.getElementById("controlButton");
+const gpsButton = document.getElementById("gpsButton");
 const socButton = document.getElementById("soc");
 const sohButton = document.getElementById("soh");
 const votageButton = document.getElementById("votage");
@@ -10,19 +11,93 @@ const svg = document.getElementsByTagName("svg")[0];
 const socTimeLabel = document.getElementById("socTime");
 const socValueLabel = document.getElementById("socValue");
 const socTimerLabel = document.getElementById("socTimer");
+const bleStatus = document.getElementById("bleStatus");
+const gpsStatus = document.getElementById("gpsStatus");
+const rollingLogContent = document.getElementById("rollingLogContent");
 let interval = 30000; // Changed from 10s to 30s for battery SOC
 const gpsInterval = 10000; // GPS tracking every 10s
 const version = "v1.0.14";
 const SOC = [];
 const GPS = []; // Store GPS coordinates with timestamps
 const logData = [];
+let gpsReady = false;
+let gpsIntervalId = null;
 
 // For testing
 //test();
 
+function updateStatusIndicators() {
+  // Update BLE status
+  if (isReady) {
+    bleStatus.textContent = "🟢";
+    bleStatus.title = "Bluetooth Connected";
+  } else {
+    bleStatus.textContent = "🔴";
+    bleStatus.title = "Bluetooth Disconnected";
+  }
+  
+  // Update GPS status
+  if (gpsReady) {
+    gpsStatus.textContent = "🟢";
+    gpsStatus.title = "GPS Active";
+  } else {
+    gpsStatus.textContent = "🔴";
+    gpsStatus.title = "GPS Inactive";
+  }
+}
+
+function updateRollingLog() {
+  const logEntries = [];
+  const maxEntries = 10;
+  
+  // Get the last N entries that have both GPS and SOC data
+  let gpsIndex = GPS.length - 1;
+  let socIndex = SOC.length - 1;
+  
+  while (logEntries.length < maxEntries && gpsIndex >= 0 && socIndex >= 0) {
+    const gpsEntry = GPS[gpsIndex];
+    const socEntry = SOC[socIndex];
+    
+    // Try to match GPS and SOC entries by timestamp (within 30 seconds)
+    const timeDiff = Math.abs(gpsEntry.timestamp - socEntry.d);
+    
+    if (timeDiff < 30000) {
+      // Close enough, create combined entry
+      const speed = gpsEntry.speed ? (gpsEntry.speed * 3.6).toFixed(1) : 'N/A';
+      logEntries.unshift(`
+        <div style="border-bottom: 1px solid #ddd; padding: 5px 0;">
+          <strong>${time(gpsEntry.timestamp)}</strong> | 
+          SOC: <strong>${socEntry.s}</strong> | 
+          Lat: ${gpsEntry.lat.toFixed(6)}, Lon: ${gpsEntry.lon.toFixed(6)} | 
+          Speed: ${speed} km/h
+        </div>
+      `);
+      gpsIndex--;
+      socIndex--;
+    } else if (gpsEntry.timestamp > socEntry.d) {
+      gpsIndex--;
+    } else {
+      socIndex--;
+    }
+  }
+  
+  if (logEntries.length > 0) {
+    rollingLogContent.innerHTML = logEntries.join('');
+  } else {
+    rollingLogContent.innerHTML = 'Waiting for GPS and SOC data...';
+  }
+}
+
 function predict() {
   var n = Math.min(SOC.length, 24);
   if (SOC.length < 12) {
+    spark.setAttribute("d", socToSVG());
+    return;
+  }
+  
+  // Only run calculations if both BLE and GPS are connected
+  if (!isReady || !gpsReady) {
+    connectionStatus.innerText = `Waiting for connections... (BLE: ${isReady ? 'OK' : 'NO'}, GPS: ${gpsReady ? 'OK' : 'NO'})`;
     spark.setAttribute("d", socToSVG());
     return;
   }
@@ -83,6 +158,13 @@ let hasReceivedResponse = false;
 showAnalysisButton.addEventListener("click", updateDischargeUI);
 
 function updateDischargeUI() {
+  // Check if both connections are active before showing analysis
+  if (!isReady || !gpsReady) {
+    dischargeAnalysisDiv.innerHTML = `<p>⚠️ Both Bluetooth and GPS must be active for discharge analysis. Current status: BLE ${isReady ? '✓' : '✗'}, GPS ${gpsReady ? '✓' : '✗'}</p>`;
+    rangeEstimatesDiv.innerHTML = "<p>Waiting for connections...</p>";
+    return;
+  }
+  
   const analysis = window.batteryDischargeAnalysis || [];
   
   if (analysis.length === 0) {
@@ -159,6 +241,13 @@ setInterval(() => {
 }, 30000);
 
 controlButton.addEventListener("click", BLEManager);
+gpsButton.addEventListener("click", () => {
+  if (gpsIntervalId !== null) {
+    stopGPSTracking();
+  } else {
+    startGPSTracking();
+  }
+});
 socButton.addEventListener("click", () => {
   sendMessage("22B046");
 });
@@ -207,6 +296,8 @@ function rnd(number, decimalPlaces) {
 function startGPSTracking() {
   if (!navigator.geolocation) {
     l("GPS not supported by browser", true);
+    gpsReady = false;
+    updateStatusIndicators();
     return;
   }
   
@@ -214,11 +305,28 @@ function startGPSTracking() {
   getGPSPosition();
   
   // Poll GPS every 10 seconds
-  setInterval(() => {
+  if (gpsIntervalId) {
+    clearInterval(gpsIntervalId);
+  }
+  gpsIntervalId = setInterval(() => {
     getGPSPosition();
   }, gpsInterval);
   
   l("GPS tracking started");
+  gpsButton.textContent = "Stop GPS";
+  gpsButton.style.backgroundColor = "#f44336";
+}
+
+function stopGPSTracking() {
+  if (gpsIntervalId) {
+    clearInterval(gpsIntervalId);
+    gpsIntervalId = null;
+  }
+  gpsReady = false;
+  updateStatusIndicators();
+  gpsButton.textContent = "Enable GPS";
+  gpsButton.style.backgroundColor = "#f44336";
+  l("GPS tracking stopped");
 }
 
 function getGPSPosition() {
@@ -235,6 +343,12 @@ function getGPSPosition() {
       };
       GPS.push(gpsData);
       
+      // Set GPS as ready after first successful read
+      if (!gpsReady) {
+        gpsReady = true;
+        updateStatusIndicators();
+      }
+      
       // Calculate speed if not provided by GPS
       if (GPS.length > 1 && !gpsData.speed) {
         const prev = GPS[GPS.length - 2];
@@ -249,9 +363,12 @@ function getGPSPosition() {
       }
       
       updateBatteryDischargeAnalysis();
+      updateRollingLog();
     },
     (error) => {
       l(`GPS error: ${error.message}`);
+      gpsReady = false;
+      updateStatusIndicators();
     },
     {
       enableHighAccuracy: true,
@@ -279,6 +396,11 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
 
 // Analyze battery discharge rate vs speed
 function updateBatteryDischargeAnalysis() {
+  // Only analyze if both BLE and GPS are connected
+  if (!isReady || !gpsReady) {
+    return;
+  }
+  
   if (SOC.length < 2 || GPS.length < 2) {
     return; // Need at least 2 data points
   }
@@ -372,6 +494,9 @@ function parseMessage(value) {
 
         socTimeLabel.innerText = time(now);
         socValueLabel.innerText = byte4And5;
+        
+        // Update rolling log with new SOC data
+        updateRollingLog();
 
         // window.speechSynthesis.speak(new SpeechSynthesisUtterance(`${Soc93}%, ${Soc95}%, ${Soc97}%`));
       }
@@ -437,7 +562,7 @@ if ("serviceWorker" in navigator) {
       publish("NEW_SW_CONTROLLING");
     });
 
-    navigator.serviceWorker.register("/service-worker.js?097jj").then(
+    navigator.serviceWorker.register("/service-worker.js?v2").then(
       (registration) => {
         console.log("ServiceWorker registration successful with scope: ", registration.scope);
       },
@@ -445,6 +570,9 @@ if ("serviceWorker" in navigator) {
         console.log("ServiceWorker registration failed: ", err);
       }
     );
+    
+    // Initialize status indicators
+    updateStatusIndicators();
     
     // Start GPS tracking when app loads
     startGPSTracking();
@@ -469,7 +597,9 @@ async function executeMessageAwaitResponse() {
   const next = currentQueue.shift();
   if (!next) {
     connectionStatus.textContent = `READY`;
-    controlButton.style.display = "none";
+    controlButton.textContent = "BLE Connected";
+    controlButton.style.backgroundColor = "#4caf50";
+    controlButton.disabled = true;
     setTimeout(() => {
       sendMessage("22B046");
     }, 500);
@@ -619,6 +749,7 @@ async function BLEManager() {
 
     connectionStatus.textContent = "CONNECTED";
     isReady = true;
+    updateStatusIndicators();
 
     // select1.addEventListener("change", () => {
     //   const [attr, index] = select1.value.split("-");
@@ -629,6 +760,8 @@ async function BLEManager() {
     await reset();
   } catch (e) {
     console.log(e);
+    isReady = false;
+    updateStatusIndicators();
     if (typeof device !== "undefined") {
       connectionStatus.textContent = "CONNECTION FAILED";
     } else {
