@@ -21,8 +21,24 @@
       <span id="socValue">691</span>
     </div>
     <div class="wrapper">
-      <button type="button" id="controlButton">Connect</button>
+      <div style="display: flex; align-items: center; gap: 10px; margin: 10px 0;">
+        <div style="display: flex; align-items: center; gap: 5px;">
+          <span id="bleStatus" style="font-size: 24px;" title="Bluetooth Status">⚫</span>
+          <button type="button" id="controlButton">Connect BLE</button>
+        </div>
+        <div style="display: flex; align-items: center; gap: 5px;">
+          <span id="gpsStatus" style="font-size: 24px;" title="GPS Status">⚫</span>
+          <button type="button" id="gpsButton">Enable GPS</button>
+        </div>
+      </div>
       <span id="connectionStatus">IDLE</span>
+      <hr />
+      <div id="rollingLog" style="background: #f5f5f5; padding: 10px; border-radius: 5px; margin: 10px 0; max-height: 200px; overflow-y: auto; font-size: 12px; font-family: monospace;">
+        <strong>Rolling Log (Coordinates & SOC)</strong>
+        <div id="rollingLogContent" style="margin-top: 5px;">
+          Waiting for data...
+        </div>
+      </div>
       <div>
         <svg viewbox="0 0 100 1000" width="100%" height="200px" preserveaspectratio="none">
           <path stroke-width="10" stroke="blue" id="spark"></path>
