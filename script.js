@@ -16,12 +16,151 @@ const gpsStatus = document.getElementById("gpsStatus");
 const rollingLogContent = document.getElementById("rollingLogContent");
 let interval = 30000; // Changed from 10s to 30s for battery SOC
 const gpsInterval = 10000; // GPS tracking every 10s
-const version = "v1.0.14";
+const version = "v1.0.15";
 const SOC = [];
 const GPS = []; // Store GPS coordinates with timestamps
 const logData = [];
 let gpsReady = false;
 let gpsIntervalId = null;
+
+// Load persisted data from localStorage on startup
+function loadPersistedData() {
+  try {
+    const savedData = localStorage.getItem('carScannerData');
+    if (savedData) {
+      const data = JSON.parse(savedData);
+      
+      // Restore SOC data
+      if (data.SOC && Array.isArray(data.SOC)) {
+        SOC.push(...data.SOC.map(item => ({
+          d: new Date(item.d),
+          s: item.s
+        })));
+      }
+      
+      // Restore GPS data
+      if (data.GPS && Array.isArray(data.GPS)) {
+        GPS.push(...data.GPS.map(item => ({
+          ...item,
+          timestamp: new Date(item.timestamp)
+        })));
+      }
+      
+      // Restore log data
+      if (data.logData && Array.isArray(data.logData)) {
+        logData.push(...data.logData);
+      }
+      
+      l(`Loaded ${SOC.length} SOC records, ${GPS.length} GPS records, ${logData.length} log entries from storage`);
+      
+      // Update UI with loaded data
+      predict();
+      updateRollingLog();
+      updateBatteryDischargeAnalysis();
+      updateDischargeUI();
+      updateDataStats();
+    }
+  } catch (error) {
+    console.error('Error loading persisted data:', error);
+    l('Error loading persisted data from storage');
+  }
+}
+
+// Save data to localStorage
+function saveDataToStorage() {
+  try {
+    const dataToSave = {
+      SOC: SOC.map(item => ({ d: item.d.toISOString(), s: item.s })),
+      GPS: GPS.map(item => ({
+        timestamp: item.timestamp.toISOString(),
+        lat: item.lat,
+        lon: item.lon,
+        speed: item.speed,
+        altitude: item.altitude,
+        heading: item.heading,
+        accuracy: item.accuracy
+      })),
+      logData: logData,
+      savedAt: new Date().toISOString()
+    };
+    localStorage.setItem('carScannerData', JSON.stringify(dataToSave));
+    updateDataStats();
+  } catch (error) {
+    console.error('Error saving data to storage:', error);
+  }
+}
+
+// Download all data as JSON file
+function downloadData() {
+  const dataToDownload = {
+    version: version,
+    exportDate: new Date().toISOString(),
+    SOC: SOC.map(item => ({ 
+      timestamp: item.d.toISOString(), 
+      value: item.s,
+      percentage93: Math.round(item.s / 9.3 * 10) / 10,
+      percentage95: Math.round(item.s / 9.5 * 10) / 10,
+      percentage97: Math.round(item.s / 9.7 * 10) / 10
+    })),
+    GPS: GPS.map(item => ({
+      timestamp: item.timestamp.toISOString(),
+      latitude: item.lat,
+      longitude: item.lon,
+      speed_ms: item.speed,
+      speed_kmh: item.speed ? (item.speed * 3.6) : null,
+      altitude: item.altitude,
+      heading: item.heading,
+      accuracy: item.accuracy
+    })),
+    logs: logData,
+    batteryDischargeAnalysis: window.batteryDischargeAnalysis || [],
+    summary: {
+      totalSOCRecords: SOC.length,
+      totalGPSRecords: GPS.length,
+      totalLogEntries: logData.length,
+      firstSOCTimestamp: SOC.length > 0 ? SOC[0].d.toISOString() : null,
+      lastSOCTimestamp: SOC.length > 0 ? SOC[SOC.length - 1].d.toISOString() : null,
+      firstGPSTimestamp: GPS.length > 0 ? GPS[0].timestamp.toISOString() : null,
+      lastGPSTimestamp: GPS.length > 0 ? GPS[GPS.length - 1].timestamp.toISOString() : null
+    }
+  };
+  
+  const blob = new Blob([JSON.stringify(dataToDownload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `car-scanner-data-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  
+  l(`Downloaded ${SOC.length} SOC records, ${GPS.length} GPS records, and ${logData.length} log entries`);
+}
+
+// Clear all cached data
+function clearAllData() {
+  if (confirm('Are you sure you want to clear all cached data? This cannot be undone.')) {
+    SOC.length = 0;
+    GPS.length = 0;
+    logData.length = 0;
+    window.batteryDischargeAnalysis = [];
+    
+    localStorage.removeItem('carScannerData');
+    
+    // Reset UI
+    spark.setAttribute("d", "M0 0");
+    lr.setAttribute("d", "");
+    connectionStatus.innerText = gpsReady && isReady ? 'READY' : 'IDLE';
+    rollingLogContent.innerHTML = 'Waiting for data...';
+    dischargeAnalysisDiv.innerHTML = '<p>Collecting GPS and battery data...</p>';
+    rangeEstimatesDiv.innerHTML = '';
+    response.innerText = 'All data cleared';
+    
+    updateDataStats();
+    l('All cached data cleared');
+  }
+}
 
 // For testing
 //test();
@@ -151,11 +290,28 @@ const response = document.getElementById("response");
 const showAnalysisButton = document.getElementById("showAnalysis");
 const dischargeAnalysisDiv = document.getElementById("dischargeAnalysis");
 const rangeEstimatesDiv = document.getElementById("rangeEstimatesList");
+const downloadDataButton = document.getElementById("downloadData");
+const clearDataButton = document.getElementById("clearData");
+const dataStatsText = document.getElementById("dataStatsText");
 
 let hasReceivedResponse = false;
 
+// Update data statistics display
+function updateDataStats() {
+  if (dataStatsText) {
+    const socCount = SOC.length;
+    const gpsCount = GPS.length;
+    const logCount = logData.length;
+    dataStatsText.textContent = `Cached: ${socCount} SOC records, ${gpsCount} GPS points, ${logCount} log entries`;
+  }
+}
+
 // Show discharge analysis button handler
 showAnalysisButton.addEventListener("click", updateDischargeUI);
+
+// Download and clear data button handlers
+downloadDataButton.addEventListener("click", downloadData);
+clearDataButton.addEventListener("click", clearAllData);
 
 function updateDischargeUI() {
   // Check if both connections are active before showing analysis
@@ -364,6 +520,9 @@ function getGPSPosition() {
       
       updateBatteryDischargeAnalysis();
       updateRollingLog();
+      
+      // Save to localStorage after GPS update
+      saveDataToStorage();
     },
     (error) => {
       l(`GPS error: ${error.message}`);
@@ -497,6 +656,9 @@ function parseMessage(value) {
         
         // Update rolling log with new SOC data
         updateRollingLog();
+        
+        // Save to localStorage after SOC update
+        saveDataToStorage();
 
         // window.speechSynthesis.speak(new SpeechSynthesisUtterance(`${Soc93}%, ${Soc95}%, ${Soc97}%`));
       }
@@ -574,6 +736,9 @@ if ("serviceWorker" in navigator) {
     // Initialize status indicators
     updateStatusIndicators();
     
+    // Load persisted data from localStorage
+    loadPersistedData();
+    
     // Start GPS tracking when app loads
     startGPSTracking();
   });
@@ -648,6 +813,11 @@ async function sendMessage(message) {
 function l(msg) {
   logData.push(msg);
   response.innerText = logData.slice(-100).join("\n");
+  
+  // Debounce localStorage saves for logs (save every 10 log entries)
+  if (logData.length % 10 === 0) {
+    saveDataToStorage();
+  }
 }
 async function write(c, msg) {
   var comm = enc.encode(msg + "\r");
