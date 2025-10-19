@@ -1,4 +1,4 @@
-const CACHE_NAME = `obd-1.0.0-0.01859856128519227`;
+const CACHE_NAME = `obd-1.0.14-${Math.random()}`;
 
 // Never cachs
 const nc = [/microsoft-identity-association/];
