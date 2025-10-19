@@ -10,9 +10,11 @@ const svg = document.getElementsByTagName("svg")[0];
 const socTimeLabel = document.getElementById("socTime");
 const socValueLabel = document.getElementById("socValue");
 const socTimerLabel = document.getElementById("socTimer");
-let interval = 10000;
-const version = "v1.0.13";
+let interval = 30000; // Changed from 10s to 30s for battery SOC
+const gpsInterval = 10000; // GPS tracking every 10s
+const version = "v1.0.14";
 const SOC = [];
+const GPS = []; // Store GPS coordinates with timestamps
 const logData = [];
 
 // For testing
@@ -71,8 +73,90 @@ const connectionStatus = document.getElementById("connectionStatus");
 const msg = document.getElementById("msg");
 const sendButton = document.getElementById("send");
 const response = document.getElementById("response");
+const showAnalysisButton = document.getElementById("showAnalysis");
+const dischargeAnalysisDiv = document.getElementById("dischargeAnalysis");
+const rangeEstimatesDiv = document.getElementById("rangeEstimatesList");
 
 let hasReceivedResponse = false;
+
+// Show discharge analysis button handler
+showAnalysisButton.addEventListener("click", updateDischargeUI);
+
+function updateDischargeUI() {
+  const analysis = window.batteryDischargeAnalysis || [];
+  
+  if (analysis.length === 0) {
+    dischargeAnalysisDiv.innerHTML = "<p>No data available yet. Keep driving to collect data.</p>";
+    rangeEstimatesDiv.innerHTML = "<p>Insufficient data</p>";
+    return;
+  }
+  
+  // Group by speed ranges (bins of 10 km/h)
+  const speedBins = {};
+  analysis.forEach(a => {
+    const bin = Math.floor(a.speed / 10) * 10;
+    if (!speedBins[bin]) {
+      speedBins[bin] = [];
+    }
+    speedBins[bin].push(a.dischargeRate);
+  });
+  
+  // Calculate average discharge rate per speed bin
+  const binAverages = Object.keys(speedBins).map(bin => ({
+    speed: parseInt(bin),
+    avgDischarge: speedBins[bin].reduce((sum, d) => sum + d, 0) / speedBins[bin].length,
+    samples: speedBins[bin].length
+  })).sort((a, b) => a.speed - b.speed);
+  
+  // Display discharge vs speed
+  let html = "<table style='width: 100%; border-collapse: collapse;'>";
+  html += "<tr><th style='border: 1px solid #ddd; padding: 8px;'>Speed (km/h)</th>";
+  html += "<th style='border: 1px solid #ddd; padding: 8px;'>Discharge Rate (SOC/hr)</th>";
+  html += "<th style='border: 1px solid #ddd; padding: 8px;'>Samples</th></tr>";
+  
+  binAverages.forEach(bin => {
+    html += `<tr>
+      <td style='border: 1px solid #ddd; padding: 8px;'>${bin.speed}-${bin.speed + 10}</td>
+      <td style='border: 1px solid #ddd; padding: 8px;'>${rnd(bin.avgDischarge, 2)}</td>
+      <td style='border: 1px solid #ddd; padding: 8px;'>${bin.samples}</td>
+    </tr>`;
+  });
+  html += "</table>";
+  dischargeAnalysisDiv.innerHTML = html;
+  
+  // Calculate range estimates
+  if (SOC.length > 0) {
+    const currentSOC = SOC[SOC.length - 1].s;
+    let rangeHTML = "<table style='width: 100%; border-collapse: collapse;'>";
+    rangeHTML += "<tr><th style='border: 1px solid #ddd; padding: 8px;'>Speed (km/h)</th>";
+    rangeHTML += "<th style='border: 1px solid #ddd; padding: 8px;'>Est. Range (km)</th>";
+    rangeHTML += "<th style='border: 1px solid #ddd; padding: 8px;'>Est. Time</th></tr>";
+    
+    binAverages.forEach(bin => {
+      if (bin.avgDischarge > 0) {
+        const hoursRemaining = currentSOC / bin.avgDischarge;
+        const kmRemaining = hoursRemaining * (bin.speed + 5); // Use mid-point of speed range
+        const hours = Math.floor(hoursRemaining);
+        const minutes = Math.round((hoursRemaining - hours) * 60);
+        
+        rangeHTML += `<tr>
+          <td style='border: 1px solid #ddd; padding: 8px;'>${bin.speed}-${bin.speed + 10}</td>
+          <td style='border: 1px solid #ddd; padding: 8px;'>${rnd(kmRemaining, 1)}</td>
+          <td style='border: 1px solid #ddd; padding: 8px;'>${hours}h ${minutes}m</td>
+        </tr>`;
+      }
+    });
+    rangeHTML += "</table>";
+    rangeEstimatesDiv.innerHTML = rangeHTML;
+  }
+}
+
+// Auto-update discharge analysis every 30 seconds
+setInterval(() => {
+  if (window.batteryDischargeAnalysis && window.batteryDischargeAnalysis.length > 0) {
+    updateDischargeUI();
+  }
+}, 30000);
 
 controlButton.addEventListener("click", BLEManager);
 socButton.addEventListener("click", () => {
@@ -117,6 +201,127 @@ function rnd(number, decimalPlaces) {
     factor *= 10;
   }
   return Math.round(number * factor) / factor;
+}
+
+// GPS Tracking Functions
+function startGPSTracking() {
+  if (!navigator.geolocation) {
+    l("GPS not supported by browser", true);
+    return;
+  }
+  
+  // Get initial position
+  getGPSPosition();
+  
+  // Poll GPS every 10 seconds
+  setInterval(() => {
+    getGPSPosition();
+  }, gpsInterval);
+  
+  l("GPS tracking started");
+}
+
+function getGPSPosition() {
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      const gpsData = {
+        timestamp: new Date(),
+        lat: position.coords.latitude,
+        lon: position.coords.longitude,
+        speed: position.coords.speed, // m/s, may be null
+        altitude: position.coords.altitude,
+        heading: position.coords.heading,
+        accuracy: position.coords.accuracy
+      };
+      GPS.push(gpsData);
+      
+      // Calculate speed if not provided by GPS
+      if (GPS.length > 1 && !gpsData.speed) {
+        const prev = GPS[GPS.length - 2];
+        const distance = calculateDistance(prev.lat, prev.lon, gpsData.lat, gpsData.lon);
+        const timeDiff = (gpsData.timestamp - prev.timestamp) / 1000; // seconds
+        gpsData.speed = timeDiff > 0 ? distance / timeDiff : 0; // m/s
+      }
+      
+      // Keep last 1000 GPS points (about 2.7 hours at 10s intervals)
+      if (GPS.length > 1000) {
+        GPS.shift();
+      }
+      
+      updateBatteryDischargeAnalysis();
+    },
+    (error) => {
+      l(`GPS error: ${error.message}`);
+    },
+    {
+      enableHighAccuracy: true,
+      timeout: 5000,
+      maximumAge: 0
+    }
+  );
+}
+
+// Calculate distance between two GPS coordinates using Haversine formula
+function calculateDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371e3; // Earth's radius in meters
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
+  
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  
+  return R * c; // Distance in meters
+}
+
+// Analyze battery discharge rate vs speed
+function updateBatteryDischargeAnalysis() {
+  if (SOC.length < 2 || GPS.length < 2) {
+    return; // Need at least 2 data points
+  }
+  
+  // Find SOC and GPS data points that are close in time
+  const analysis = [];
+  
+  for (let i = 1; i < SOC.length; i++) {
+    const socCurrent = SOC[i];
+    const socPrevious = SOC[i - 1];
+    
+    // Find GPS data around this SOC reading
+    const gpsDataInRange = GPS.filter(g => 
+      g.timestamp >= socPrevious.d && g.timestamp <= socCurrent.d
+    );
+    
+    if (gpsDataInRange.length > 0) {
+      // Calculate average speed during this period
+      const avgSpeed = gpsDataInRange.reduce((sum, g) => sum + (g.speed || 0), 0) / gpsDataInRange.length;
+      
+      // Calculate SOC discharge rate
+      const socChange = socPrevious.s - socCurrent.s; // Positive means discharge
+      const timeDiff = (socCurrent.d - socPrevious.d) / 1000 / 3600; // hours
+      const dischargeRate = timeDiff > 0 ? socChange / timeDiff : 0; // SOC units per hour
+      
+      if (avgSpeed > 0.5) { // Only include if moving (> 0.5 m/s ≈ 1.8 km/h)
+        analysis.push({
+          speed: avgSpeed * 3.6, // Convert m/s to km/h
+          dischargeRate: dischargeRate,
+          timestamp: socCurrent.d
+        });
+      }
+    }
+  }
+  
+  // Store analysis globally for UI access
+  window.batteryDischargeAnalysis = analysis;
+  
+  // Update UI with basic stats
+  if (analysis.length > 0) {
+    const avgDischarge = analysis.reduce((sum, a) => sum + a.dischargeRate, 0) / analysis.length;
+    l(`Avg discharge rate: ${rnd(avgDischarge, 2)} SOC/hr at avg speed ${rnd(analysis[analysis.length - 1].speed, 1)} km/h`);
+  }
 }
 
 function parseMessage(value) {
@@ -240,6 +445,9 @@ if ("serviceWorker" in navigator) {
         console.log("ServiceWorker registration failed: ", err);
       }
     );
+    
+    // Start GPS tracking when app loads
+    startGPSTracking();
   });
 }
 

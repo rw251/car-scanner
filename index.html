@@ -40,6 +40,18 @@
       <input type="text" id="msg" />
       <button id="send">Send message</button>
       <hr />
+      <div>
+        <h3>Battery Discharge Analysis</h3>
+        <div id="dischargeAnalysis" style="font-size: 12px; margin: 10px 0;">
+          <p>Collecting GPS and battery data...</p>
+        </div>
+        <button id="showAnalysis">Show Discharge vs Speed</button>
+        <div id="rangeEstimates" style="margin: 10px 0; font-size: 12px;">
+          <strong>Range Estimates:</strong>
+          <div id="rangeEstimatesList"></div>
+        </div>
+      </div>
+      <hr />
       <div
         id="response"
         style="font-size: 10px; font-family: monospace, monospace;height:200px;overflow-y:auto"
