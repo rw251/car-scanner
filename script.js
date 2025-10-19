@@ -242,7 +242,7 @@ setInterval(() => {
 
 controlButton.addEventListener("click", BLEManager);
 gpsButton.addEventListener("click", () => {
-  if (gpsReady) {
+  if (gpsIntervalId !== null) {
     stopGPSTracking();
   } else {
     startGPSTracking();
@@ -313,8 +313,8 @@ function startGPSTracking() {
   }, gpsInterval);
   
   l("GPS tracking started");
-  gpsButton.textContent = "GPS Active";
-  gpsButton.style.backgroundColor = "#4caf50";
+  gpsButton.textContent = "Stop GPS";
+  gpsButton.style.backgroundColor = "#f44336";
 }
 
 function stopGPSTracking() {
@@ -562,7 +562,7 @@ if ("serviceWorker" in navigator) {
       publish("NEW_SW_CONTROLLING");
     });
 
-    navigator.serviceWorker.register("/service-worker.js?097jj").then(
+    navigator.serviceWorker.register("/service-worker.js?v2").then(
       (registration) => {
         console.log("ServiceWorker registration successful with scope: ", registration.scope);
       },
