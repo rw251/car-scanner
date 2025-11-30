@@ -1,0 +1,27 @@
+{
+  "name": "obd-ble-simulator",
+  "version": "1.0.0",
+  "description": "BLE OBD-II simulator for testing car-scanner PWA and Android app",
+  "main": "simulator.js",
+  "scripts": {
+    "start": "su -c 'node simulator.js'",
+    "start:verbose": "su -c 'DEBUG=* node simulator.js'",
+    "test": "node test-responses.js"
+  },
+  "keywords": [
+    "obd",
+    "elm327",
+    "ble",
+    "bluetooth",
+    "simulator",
+    "testing"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dbus-next": "^0.10.2"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
