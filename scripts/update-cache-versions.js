@@ -71,7 +71,8 @@ replaceInFile(scriptPath, [
 // new script when version changes.
 replaceInFile(indexPath, [
   {
-    search: /<script\s+src="\/?script\.js"\s+defer>\s*<\/script>|<script\s+src="\/?script\.js"\s+defer\s*><\/script>/i,
+    search:
+      /<script\s+src="\/?script\.js"\s+defer>\s*<\/script>|<script\s+src="\/?script\.js"\s+defer\s*><\/script>/i,
     replace: `<script src="/script.js?v=${verTag}" defer></script>`,
   },
 ]);
