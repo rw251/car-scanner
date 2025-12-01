@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
-# Pre-commit hook: update cache/version strings so deployments get new cache names
-ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$(dirname "$0")/..")
-NODE=$(which node || echo "/usr/bin/node")
-echo "Running pre-commit: updating cache/version strings"
-"$NODE" "$ROOT/scripts/update-cache-versions.js" || {
-  echo "Warning: update-cache-versions failed" >&2
+
+# Update cache versions before commit and stage changes so they are included
+# in the user's commit. This avoids requiring an extra commit and prevents
+# an endless loop where the hook modifies files but those changes are not
+# staged.
+
+set -e
+
+echo "Running update-cache-versions..."
+node ./scripts/update-cache-versions.js || {
+  echo "update-cache-versions failed" >&2
+  exit 1
 }
+
+# Stage any files the script may have modified
+git add service-worker.js script.js package.json || true
+
 exit 0

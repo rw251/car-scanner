@@ -1,45 +1,60 @@
 #!/usr/bin/env node
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
-function nowVersion() {
-  const d = new Date();
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  const hh = String(d.getUTCHours()).padStart(2, '0');
-  const mm = String(d.getUTCMinutes()).padStart(2, '0');
-  const ss = String(d.getUTCSeconds()).padStart(2, '0');
-  return `${y}${m}${day}${hh}${mm}${ss}`;
+const root = path.resolve(__dirname, "..");
+const swPath = path.join(root, "service-worker.js");
+const scriptPath = path.join(root, "script.js");
+const pkgPath = path.join(root, "package.json");
+
+function bumpPatchVersion(v) {
+  const parts = String(v || "0.0.0")
+    .split(".")
+    .map((p) => parseInt(p, 10) || 0);
+  if (parts.length < 3) {
+    while (parts.length < 3) parts.push(0);
+  }
+  parts[2] = parts[2] + 1;
+  return parts.slice(0, 3).join(".");
 }
-
-const root = path.resolve(__dirname, '..');
-const swPath = path.join(root, 'service-worker.js');
-const scriptPath = path.join(root, 'script.js');
-
-const ver = 'obd-' + nowVersion();
-console.log('Updating cache/version to', ver);
 
 function replaceInFile(filePath, replacements) {
   if (!fs.existsSync(filePath)) return false;
-  let content = fs.readFileSync(filePath, 'utf8');
+  let content = fs.readFileSync(filePath, "utf8");
   let out = content;
   replacements.forEach(({ search, replace }) => {
     out = out.replace(search, replace);
   });
   if (out !== content) {
-    fs.writeFileSync(filePath, out, 'utf8');
-    console.log('Patched', path.basename(filePath));
+    fs.writeFileSync(filePath, out, "utf8");
+    console.log("Patched", path.basename(filePath));
     return true;
   }
   return false;
 }
 
-// Update service-worker CACHE_NAME like: const CACHE_NAME = `obd-1.0.18`;
+// Read package.json and bump patch
+let pkg = {};
+if (fs.existsSync(pkgPath)) {
+  try {
+    pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) || {};
+  } catch (e) {
+    console.error("Failed to parse package.json:", e.message || e);
+  }
+}
+const oldVersion = pkg.version || "0.0.0";
+const newVersion = bumpPatchVersion(oldVersion);
+pkg.version = newVersion;
+fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n", "utf8");
+console.log("Bumped package.json version", oldVersion, "->", newVersion);
+
+const verTag = `v${newVersion}`;
+
+// Update service-worker CACHE_NAME like: const CACHE_NAME = `obd-v1.2.3`;
 replaceInFile(swPath, [
   {
     search: /const\s+CACHE_NAME\s*=\s*`[^`]+`\s*;/,
-    replace: `const CACHE_NAME = \`${ver}\`;`,
+    replace: `const CACHE_NAME = ` + "`obd-${verTag}`" + `;`,
   },
 ]);
 
@@ -47,9 +62,9 @@ replaceInFile(swPath, [
 replaceInFile(scriptPath, [
   {
     search: /const\s+version\s*=\s*"[^"]*"\s*;/,
-    replace: `const version = "${ver}";`,
+    replace: `const version = "${verTag}";`,
   },
 ]);
 
 // Done
-console.log('Version update complete.');
+console.log("Version update complete:", verTag);
