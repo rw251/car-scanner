@@ -44,6 +44,8 @@ const APP_PATH = "/com/obdsimulator";
 
 let bus;
 let mainCharInterface = null;
+let advManager = null;
+let gattManager = null;
 
 // ============================================================================
 // Vehicle Simulation - 57kWh battery with realistic driving
@@ -346,9 +348,14 @@ function createPropertiesInterface(target, ifaceName, propDefs) {
       GetAll: { inSignature: "s", outSignature: "a{sv}" },
       Set: { inSignature: "ssv", outSignature: "" },
     },
+    signals: {
+      PropertiesChanged: { signature: "sa{sv}as" },
+    },
   });
 
-  Props.prototype.Get = function (iface, prop) {
+  const propsInstance = new Props();
+
+  propsInstance.Get = function (iface, prop) {
     try {
       console.log(`⟲ Properties.Get called for iface=${iface} prop=${prop}`);
       if (iface !== ifaceName || !propDefs[prop]) throw new Error("Unknown property");
@@ -363,7 +370,7 @@ function createPropertiesInterface(target, ifaceName, propDefs) {
     }
   };
 
-  Props.prototype.GetAll = function (iface) {
+  propsInstance.GetAll = function (iface) {
     try {
       console.log(`⟲ Properties.GetAll called for iface=${iface}`);
       if (iface !== ifaceName) return {};
@@ -381,11 +388,11 @@ function createPropertiesInterface(target, ifaceName, propDefs) {
     }
   };
 
-  Props.prototype.Set = function () {
+  propsInstance.Set = function () {
     throw new Error("Read-only");
   };
 
-  return new Props();
+  return propsInstance;
 }
 
 // ============================================================================
@@ -412,7 +419,13 @@ GattApplication.prototype.GetManagedObjects = function () {
     "org.bluez.GattCharacteristic1": {
       UUID: new dbus.Variant("s", CHARS.obdReadWrite),
       Service: new dbus.Variant("o", `${APP_PATH}/service_main`),
-      Flags: new dbus.Variant("as", ["read", "write", "write-without-response", "notify"]),
+      Flags: new dbus.Variant("as", [
+        "read",
+        "write",
+        "write-without-response",
+        "notify",
+        "indicate",
+      ]),
     },
   };
 
@@ -465,11 +478,6 @@ GattApplication.prototype.GetManagedObjects = function () {
       Flags: new dbus.Variant("as", ["read"]),
     },
   };
-
-  // Generic Attribute Service
-  // Note: Do not export Generic Attribute Service here; BlueZ manages GATT/GAP.
-
-  // Note: Do not export Generic Access (GAP) service or its characteristics; BlueZ handles these.
 
   return objects;
 };
@@ -551,16 +559,26 @@ class OBDCharacteristic extends DBusInterface {
     super("org.bluez.GattCharacteristic1");
     this._value = Buffer.from(">");
     this._notifying = false;
+    this._promptMode = (process.env.OBD_PROMPT_MODE || "inline").toLowerCase(); // inline | split
   }
 }
 
 OBDCharacteristic.prototype.UUID = CHARS.obdReadWrite;
 OBDCharacteristic.prototype.Service = `${APP_PATH}/service_main`;
-OBDCharacteristic.prototype.Flags = ["read", "write", "write-without-response", "notify"];
+OBDCharacteristic.prototype.Flags = [
+  "read",
+  "write",
+  "write-without-response",
+  "notify",
+  "indicate",
+];
 OBDCharacteristic.prototype.Notifying = false;
 
 OBDCharacteristic.prototype.ReadValue = function (options) {
-  console.log("📖 Read request");
+  const valueStr = this._value.toString("utf-8");
+  console.log(
+    `📖 Read request → returning: ${JSON.stringify(valueStr)} (${this._value.length} bytes)`
+  );
   return [...this._value];
 };
 
@@ -574,33 +592,74 @@ OBDCharacteristic.prototype.WriteValue = function (value, options) {
   const response = processCommand(command);
   console.log(`📤 Response: "${response}"`);
 
-  this._value = Buffer.from(response + "\r>");
+  // Send response with just \r (no prompt) - PWA strips \r before parsing
+  this._value = Buffer.from(response + "\r");
+  console.log(
+    `   → Notification payload: ${JSON.stringify(response + "\r")} (${this._value.length} bytes)`
+  );
+  console.log(`   → Hex: ${this._value.toString("hex")}`);
 
   if (this._notifying) {
     try {
-      this.PropertiesChanged(
-        "org.bluez.GattCharacteristic1",
-        {
-          Value: new dbus.Variant("ay", [...this._value]),
-        },
-        []
-      );
+      console.log("⟲ Emitting PropertiesChanged (Value)", {
+        len: this._value.length,
+        notifying: this._notifying,
+      });
+      if (mainCharInterface) {
+        DBusInterface.emitPropertiesChanged(mainCharInterface, { Value: [...this._value] }, []);
+        console.log("   ✓ PropertiesChanged emitted successfully");
+      } else {
+        console.error("   ✗ mainCharInterface not initialized!");
+      }
     } catch (e) {
-      // Signal sent
+      console.error("   ✗ PropertiesChanged error:", e.message);
     }
+
+    // Send prompt separately after a short delay
+    setTimeout(() => {
+      try {
+        this._value = Buffer.from(">");
+        console.log("⟲ Emitting PropertiesChanged (prompt)");
+        if (mainCharInterface) {
+          DBusInterface.emitPropertiesChanged(mainCharInterface, { Value: [...this._value] }, []);
+          console.log("   ✓ Prompt emitted successfully");
+        }
+      } catch (e) {
+        console.error("   ✗ Prompt error:", e.message);
+      }
+    }, 100);
+  } else {
+    console.log("   ⚠️  Not notifying (client not subscribed)");
   }
 };
 
 OBDCharacteristic.prototype.StartNotify = function () {
   console.log("📡 Client subscribed to notifications");
+  console.log("   → Setting _notifying=true, will emit on writes");
   this._notifying = true;
   this.Notifying = true;
+  if (mainCharInterface) {
+    try {
+      console.log("   → Emitting Notifying=true signal");
+      DBusInterface.emitPropertiesChanged(mainCharInterface, { Notifying: true }, []);
+      console.log("   ✓ Notifying signal emitted");
+    } catch (e) {
+      console.error("   ⚠️  PropertiesChanged error:", e.message);
+    }
+  }
 };
 
 OBDCharacteristic.prototype.StopNotify = function () {
   console.log("📡 Client unsubscribed");
   this._notifying = false;
   this.Notifying = false;
+  if (mainCharInterface) {
+    try {
+      DBusInterface.emitPropertiesChanged(mainCharInterface, { Notifying: false }, []);
+    } catch (e) {
+      /* ignore */
+    }
+  }
 };
 
 OBDCharacteristic.configureMembers({
@@ -608,6 +667,7 @@ OBDCharacteristic.configureMembers({
     UUID: { signature: "s", access: ACCESS_READ },
     Service: { signature: "o", access: ACCESS_READ },
     Flags: { signature: "as", access: ACCESS_READ },
+    Value: { signature: "ay", access: ACCESS_READ },
     Notifying: { signature: "b", access: ACCESS_READ },
   },
   methods: {
@@ -638,6 +698,86 @@ Introspectable.prototype.Introspect = function () {
 Introspectable.configureMembers({
   methods: { Introspect: { inSignature: "", outSignature: "s" } },
 });
+
+// --------------------------------------------------------------------------
+// BlueZ robustness helpers: auto-(re)register on daemon restarts
+// --------------------------------------------------------------------------
+async function getDbusInterface() {
+  const dbusObj = await bus.getProxyObject("org.freedesktop.DBus", "/org/freedesktop/DBus");
+  return dbusObj.getInterface("org.freedesktop.DBus");
+}
+
+async function connectBluezAndRegister() {
+  try {
+    const dbusIface = await getDbusInterface();
+    const hasOwner = await dbusIface.NameHasOwner(BLUEZ_SERVICE);
+    if (!hasOwner) {
+      console.log("🔄 BlueZ not present on D-Bus yet; retrying in 1s...");
+      setTimeout(connectBluezAndRegister, 1000);
+      return;
+    }
+
+    // Acquire managers from the adapter path
+    let bluezObj;
+    try {
+      bluezObj = await bus.getProxyObject(BLUEZ_SERVICE, ADAPTER_PATH);
+    } catch (e) {
+      console.log("🔄 Adapter not ready (hci0). Retrying in 1s...");
+      setTimeout(connectBluezAndRegister, 1000);
+      return;
+    }
+    advManager = bluezObj.getInterface("org.bluez.LEAdvertisingManager1");
+    gattManager = bluezObj.getInterface("org.bluez.GattManager1");
+    console.log("✅ Connected to BlueZ managers");
+
+    // Register GATT application (safe to call again on restart)
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await gattManager.RegisterApplication(APP_PATH, {});
+      console.log("✅ GATT application registered");
+    } catch (err) {
+      console.log("⚠️ GATT registration issue:", err && err.message ? err.message : err);
+    }
+
+    // Register advertisement (re-register if needed)
+    try {
+      await advManager.RegisterAdvertisement(ADVERT_PATH, {});
+      console.log("✅ Advertisement registered");
+    } catch (err) {
+      if (err && err.message && err.message.includes("AlreadyExists")) {
+        try {
+          await advManager.UnregisterAdvertisement(ADVERT_PATH);
+          await advManager.RegisterAdvertisement(ADVERT_PATH, {});
+          console.log("✅ Advertisement re-registered");
+        } catch (e) {
+          console.error("Failed to re-register advertisement:", e);
+        }
+      } else {
+        console.error("Advertisement registration error:", err);
+      }
+    }
+  } catch (e) {
+    console.error("❌ connectBluezAndRegister error:", e && e.message ? e.message : e);
+    setTimeout(connectBluezAndRegister, 1000);
+  }
+}
+
+async function watchBluezRestarts() {
+  try {
+    const dbusIface = await getDbusInterface();
+    dbusIface.on("NameOwnerChanged", (name, oldOwner, newOwner) => {
+      if (name !== BLUEZ_SERVICE) return;
+      if (!newOwner) {
+        console.log("⚠️ BlueZ disappeared from D-Bus (org.bluez). Waiting to re-register...");
+      } else {
+        console.log("🔁 BlueZ appeared on D-Bus (org.bluez). Re-registering...");
+        connectBluezAndRegister();
+      }
+    });
+  } catch (e) {
+    console.error("⚠️ Failed to attach BlueZ restart watcher:", e && e.message ? e.message : e);
+  }
+}
 
 async function main() {
   console.log("\n🚗 OBD BLE Simulator (D-Bus) - IOS-Vlink");
@@ -680,10 +820,8 @@ async function main() {
       // best-effort logging
     }
 
-    const bluezObj = await bus.getProxyObject(BLUEZ_SERVICE, ADAPTER_PATH);
-    const advManager = bluezObj.getInterface("org.bluez.LEAdvertisingManager1");
-    const gattManager = bluezObj.getInterface("org.bluez.GattManager1");
-    console.log("✅ Connected to BlueZ");
+    // Set up watch for BlueZ restarts and (re)register managers/advertising
+    await watchBluezRestarts();
 
     // Export Advertisement
     const advertisement = new Advertisement();
@@ -721,15 +859,20 @@ async function main() {
     mainCharInterface = new OBDCharacteristic();
     bus.export(`${APP_PATH}/service_main/char_obd`, mainCharInterface);
     // main characteristic exported (Properties interface provided below)
-    bus.export(
-      `${APP_PATH}/service_main/char_obd`,
-      createPropertiesInterface(mainCharInterface, "org.bluez.GattCharacteristic1", {
+    const mainCharProps = createPropertiesInterface(
+      mainCharInterface,
+      "org.bluez.GattCharacteristic1",
+      {
         UUID: { sig: "s", get: () => mainCharInterface.UUID },
         Service: { sig: "o", get: () => mainCharInterface.Service },
         Flags: { sig: "as", get: () => mainCharInterface.Flags },
+        Value: { sig: "ay", get: () => [...mainCharInterface._value] },
         Notifying: { sig: "b", get: () => mainCharInterface.Notifying },
-      })
+      }
     );
+    bus.export(`${APP_PATH}/service_main/char_obd`, mainCharProps);
+    // keep reference so characteristic can emit PropertiesChanged on the exported Props interface
+    mainCharInterface._props = mainCharProps;
 
     // Device Information Service
     const DevInfoService = createServiceClass(SERVICES.deviceInformation);
@@ -829,51 +972,32 @@ async function main() {
 
     console.log("✅ All services and characteristics exported");
 
-    // Register GATT application
+    // Disable BR/EDR discoverability while keeping pairable off
+    // This prevents Android from seeing us as a Classic Bluetooth device
     try {
-      // Small delay to ensure all exports are fully available on the bus
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      await gattManager.RegisterApplication(APP_PATH, {});
-      console.log("✅ GATT application registered");
-    } catch (err) {
-      console.log("⚠️ GATT registration issue:");
-      console.log(err);
-      try {
-        console.log("Bus unique name debug:", {
-          busName: bus.name || bus._name,
-          connUnique:
-            (bus.connection && (bus.connection.uniqueName || bus.connection._name)) || null,
-          connUniqueAlt:
-            (bus._connection && (bus._connection.uniqueName || bus._connection._name)) || null,
-        });
-      } catch (e) {
-        /* ignore */
-      }
-      if (err && err.stack) console.log(err.stack);
+      const adapterObj = await bus.getProxyObject(BLUEZ_SERVICE, ADAPTER_PATH);
+      const adapterProps = adapterObj.getInterface("org.freedesktop.DBus.Properties");
+
+      // Make adapter non-discoverable and non-pairable for BR/EDR
+      // LE advertising will still work via LEAdvertisingManager
+      await adapterProps.Set("org.bluez.Adapter1", "Discoverable", new dbus.Variant("b", false));
+      await adapterProps.Set("org.bluez.Adapter1", "Pairable", new dbus.Variant("b", false));
+      console.log("✅ Disabled BR/EDR discoverability (LE advertising only)");
+    } catch (e) {
+      console.log("⚠️  Could not configure adapter discoverability:", e.message);
     }
 
-    // Register advertisement
-    try {
-      await advManager.RegisterAdvertisement(ADVERT_PATH, {});
-      console.log("✅ Advertisement registered");
-    } catch (err) {
-      if (err.message.includes("AlreadyExists")) {
-        await advManager.UnregisterAdvertisement(ADVERT_PATH);
-        await advManager.RegisterAdvertisement(ADVERT_PATH, {});
-        console.log("✅ Advertisement re-registered");
-      } else {
-        throw err;
-      }
-    }
+    // Kick initial registration (and retry until BlueZ is ready)
+    connectBluezAndRegister();
 
-    console.log('\n📱 Device is now discoverable as "IOS-Vlink"');
+    console.log('\n📱 Device is now discoverable as "IOS-Vlink" (BLE only)');
     console.log("📊 Battery:", vehicle.getSummary());
     console.log("\nCommands: drive <speed>, charge, stop, status, soc <0-100>, help\n");
 
     startConsole();
   } catch (err) {
-    console.error("❌ Error:", err.message);
-    console.error(err.stack);
+    console.error("❌ Error:", err && err.message ? err.message : err);
+    if (err && err.stack) console.error(err.stack);
     process.exit(1);
   }
 }
@@ -892,10 +1016,11 @@ function startConsole() {
     const cmd = args[0] ? args[0].toLowerCase() : "";
 
     switch (cmd) {
-      case "drive":
+      case "drive": {
         const speed = parseInt(args[1]) || 50;
         vehicle.setMode("driving", speed);
         break;
+      }
       case "charge":
         vehicle.setMode("charging");
         console.log("🔌 Charging started");
@@ -907,17 +1032,21 @@ function startConsole() {
       case "status":
         console.log(JSON.stringify(vehicle.getSummary(), null, 2));
         break;
-      case "soc":
+      case "soc": {
         const soc = parseFloat(args[1]);
         if (!isNaN(soc) && soc >= 0 && soc <= 100) {
           vehicle.soc = soc * 10;
           console.log(`🔋 SOC set to ${soc}%`);
+        } else {
+          console.log("Usage: soc <0-100>");
         }
         break;
-      case "speed":
+      }
+      case "speed": {
         const s = parseInt(args[1]) || 0;
         vehicle.setSpeed(s);
         break;
+      }
       case "help":
         console.log(`
 Commands:

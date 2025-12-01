@@ -2,10 +2,10 @@
   "name": "obd-ble-simulator",
   "version": "1.0.0",
   "description": "BLE OBD-II simulator for testing car-scanner PWA and Android app",
-  "main": "simulator.js",
+  "main": "dist/simulator-dbus.js",
   "scripts": {
-    "start": "su -c 'node simulator.js'",
-    "start:verbose": "su -c 'DEBUG=* node simulator.js'",
+    "build": "tsc",
+    "start": "su -c 'node simulator-dbus.js'",
     "test": "node test-responses.js"
   },
   "keywords": [
