@@ -4,8 +4,8 @@
   "description": "BLE OBD-II simulator for testing car-scanner PWA and Android app",
   "main": "dist/simulator-dbus.js",
   "scripts": {
-    "build": "tsc",
-    "start": "su -c 'node simulator-dbus.js'",
+    "start": "./start-simulator.sh",
+    "start:direct": "su -c 'node simulator-dbus.js'",
     "test": "node test-responses.js"
   },
   "keywords": [
