@@ -5,6 +5,7 @@ const path = require("path");
 const root = path.resolve(__dirname, "..");
 const swPath = path.join(root, "service-worker.js");
 const scriptPath = path.join(root, "script.js");
+const indexPath = path.join(root, "index.html");
 const pkgPath = path.join(root, "package.json");
 
 function bumpPatchVersion(v) {
@@ -54,7 +55,7 @@ const verTag = `v${newVersion}`;
 replaceInFile(swPath, [
   {
     search: /const\s+CACHE_NAME\s*=\s*`[^`]+`\s*;/,
-    replace: `const CACHE_NAME = ` + "`obd-${verTag}`" + `;`,
+    replace: `const CACHE_NAME = \`obd-${verTag}\`;`,
   },
 ]);
 
@@ -63,6 +64,15 @@ replaceInFile(scriptPath, [
   {
     search: /const\s+version\s*=\s*"[^"]*"\s*;/,
     replace: `const version = "${verTag}";`,
+  },
+]);
+
+// Update index.html script tag to include version query so browsers load the
+// new script when version changes.
+replaceInFile(indexPath, [
+  {
+    search: /<script\s+src="\/?script\.js"\s+defer>\s*<\/script>|<script\s+src="\/?script\.js"\s+defer\s*><\/script>/i,
+    replace: `<script src="/script.js?v=${verTag}" defer></script>`,
   },
 ]);
 

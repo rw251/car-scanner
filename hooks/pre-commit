@@ -14,6 +14,6 @@ node ./scripts/update-cache-versions.js || {
 }
 
 # Stage any files the script may have modified
-git add service-worker.js script.js package.json || true
+git add service-worker.js script.js package.json index.html || true
 
 exit 0
