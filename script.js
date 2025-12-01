@@ -16,43 +16,56 @@ const gpsStatus = document.getElementById("gpsStatus");
 const rollingLogContent = document.getElementById("rollingLogContent");
 let interval = 30000; // Changed from 10s to 30s for battery SOC
 const gpsInterval = 10000; // GPS tracking every 10s
-const version = "v1.0.16";
+const version = "v1.0.17";
 const SOC = [];
 const GPS = []; // Store GPS coordinates with timestamps
 const logData = [];
 let gpsReady = false;
 let gpsIntervalId = null;
+let gpsPermissionState = "unknown";
+let bleDevice = null;
+const STATUS_COLORS = {
+  green: "#4caf50",
+  grey: "#9e9e9e",
+  red: "#f44336",
+};
 
 // Load persisted data from localStorage on startup
 function loadPersistedData() {
   try {
-    const savedData = localStorage.getItem('carScannerData');
+    const savedData = localStorage.getItem("carScannerData");
     if (savedData) {
       const data = JSON.parse(savedData);
-      
+
       // Restore SOC data
       if (data.SOC && Array.isArray(data.SOC)) {
-        SOC.push(...data.SOC.map(item => ({
-          d: new Date(item.d),
-          s: item.s
-        })));
+        SOC.push(
+          ...data.SOC.map((item) => ({
+            d: new Date(item.d),
+            s: item.s,
+          }))
+        );
       }
-      
+
       // Restore GPS data
       if (data.GPS && Array.isArray(data.GPS)) {
-        GPS.push(...data.GPS.map(item => ({
-          ...item,
-          timestamp: new Date(item.timestamp)
-        })));
+        GPS.push(
+          ...data.GPS.map((item) => ({
+            ...item,
+            timestamp: new Date(item.timestamp),
+          }))
+        );
       }
-      
+
       // Restore log data
       if (data.logData && Array.isArray(data.logData)) {
         logData.push(...data.logData);
       }
-      
-      l(`Loaded ${SOC.length} SOC records, ${GPS.length} GPS records, ${logData.length} log entries from storage`);
-      
+
+      l(
+        `Loaded ${SOC.length} SOC records, ${GPS.length} GPS records, ${logData.length} log entries from storage`
+      );
+
       // Update UI with loaded data
       predict();
       updateRollingLog();
@@ -61,8 +74,8 @@ function loadPersistedData() {
       updateDataStats();
     }
   } catch (error) {
-    console.error('Error loading persisted data:', error);
-    l('Error loading persisted data from storage');
+    console.error("Error loading persisted data:", error);
+    l("Error loading persisted data from storage");
   }
 }
 
@@ -70,23 +83,23 @@ function loadPersistedData() {
 function saveDataToStorage() {
   try {
     const dataToSave = {
-      SOC: SOC.map(item => ({ d: item.d.toISOString(), s: item.s })),
-      GPS: GPS.map(item => ({
+      SOC: SOC.map((item) => ({ d: item.d.toISOString(), s: item.s })),
+      GPS: GPS.map((item) => ({
         timestamp: item.timestamp.toISOString(),
         lat: item.lat,
         lon: item.lon,
         speed: item.speed,
         altitude: item.altitude,
         heading: item.heading,
-        accuracy: item.accuracy
+        accuracy: item.accuracy,
       })),
       logData: logData,
-      savedAt: new Date().toISOString()
+      savedAt: new Date().toISOString(),
     };
-    localStorage.setItem('carScannerData', JSON.stringify(dataToSave));
+    localStorage.setItem("carScannerData", JSON.stringify(dataToSave));
     updateDataStats();
   } catch (error) {
-    console.error('Error saving data to storage:', error);
+    console.error("Error saving data to storage:", error);
   }
 }
 
@@ -95,22 +108,22 @@ function downloadData() {
   const dataToDownload = {
     version: version,
     exportDate: new Date().toISOString(),
-    SOC: SOC.map(item => ({ 
-      timestamp: item.d.toISOString(), 
+    SOC: SOC.map((item) => ({
+      timestamp: item.d.toISOString(),
       value: item.s,
-      percentage93: Math.round(item.s / 9.3 * 10) / 10,
-      percentage95: Math.round(item.s / 9.5 * 10) / 10,
-      percentage97: Math.round(item.s / 9.7 * 10) / 10
+      percentage93: Math.round((item.s / 9.3) * 10) / 10,
+      percentage95: Math.round((item.s / 9.5) * 10) / 10,
+      percentage97: Math.round((item.s / 9.7) * 10) / 10,
     })),
-    GPS: GPS.map(item => ({
+    GPS: GPS.map((item) => ({
       timestamp: item.timestamp.toISOString(),
       latitude: item.lat,
       longitude: item.lon,
       speed_ms: item.speed,
-      speed_kmh: item.speed ? (item.speed * 3.6) : null,
+      speed_kmh: item.speed ? item.speed * 3.6 : null,
       altitude: item.altitude,
       heading: item.heading,
-      accuracy: item.accuracy
+      accuracy: item.accuracy,
     })),
     logs: logData,
     batteryDischargeAnalysis: window.batteryDischargeAnalysis || [],
@@ -121,88 +134,97 @@ function downloadData() {
       firstSOCTimestamp: SOC.length > 0 ? SOC[0].d.toISOString() : null,
       lastSOCTimestamp: SOC.length > 0 ? SOC[SOC.length - 1].d.toISOString() : null,
       firstGPSTimestamp: GPS.length > 0 ? GPS[0].timestamp.toISOString() : null,
-      lastGPSTimestamp: GPS.length > 0 ? GPS[GPS.length - 1].timestamp.toISOString() : null
-    }
+      lastGPSTimestamp: GPS.length > 0 ? GPS[GPS.length - 1].timestamp.toISOString() : null,
+    },
   };
-  
-  const blob = new Blob([JSON.stringify(dataToDownload, null, 2)], { type: 'application/json' });
+
+  const blob = new Blob([JSON.stringify(dataToDownload, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
+  const a = document.createElement("a");
   a.href = url;
-  a.download = `car-scanner-data-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  a.download = `car-scanner-data-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-  
-  l(`Downloaded ${SOC.length} SOC records, ${GPS.length} GPS records, and ${logData.length} log entries`);
+
+  l(
+    `Downloaded ${SOC.length} SOC records, ${GPS.length} GPS records, and ${logData.length} log entries`
+  );
 }
 
 // Clear all cached data
 function clearAllData() {
-  if (confirm('Are you sure you want to clear all cached data? This cannot be undone.')) {
+  if (confirm("Are you sure you want to clear all cached data? This cannot be undone.")) {
     SOC.length = 0;
     GPS.length = 0;
     logData.length = 0;
     window.batteryDischargeAnalysis = [];
-    
-    localStorage.removeItem('carScannerData');
-    
+
+    localStorage.removeItem("carScannerData");
+
     // Reset UI
     spark.setAttribute("d", "M0 0");
     lr.setAttribute("d", "");
-    connectionStatus.innerText = gpsReady && isReady ? 'READY' : 'IDLE';
-    rollingLogContent.innerHTML = 'Waiting for data...';
-    dischargeAnalysisDiv.innerHTML = '<p>Collecting GPS and battery data...</p>';
-    rangeEstimatesDiv.innerHTML = '';
-    response.innerText = 'All data cleared';
-    
+    connectionStatus.innerText = gpsReady && isReady ? "READY" : "IDLE";
+    rollingLogContent.innerHTML = "Waiting for data...";
+    dischargeAnalysisDiv.innerHTML = "<p>Collecting GPS and battery data...</p>";
+    rangeEstimatesDiv.innerHTML = "";
+    response.innerText = "All data cleared";
+
     updateDataStats();
-    l('All cached data cleared');
+    l("All cached data cleared");
   }
 }
 
 // For testing
 //test();
 
+function setStatusIndicator(element, color, title) {
+  element.textContent = "●";
+  element.style.color = color;
+  element.title = title;
+}
+
 function updateStatusIndicators() {
-  // Update BLE status
   if (isReady) {
-    bleStatus.textContent = "🟢";
-    bleStatus.title = "Bluetooth Connected";
+    setStatusIndicator(bleStatus, STATUS_COLORS.green, "Bluetooth connected");
+    controlButton.textContent = "BLE connected";
+    controlButton.disabled = true;
   } else {
-    bleStatus.textContent = "🔴";
-    bleStatus.title = "Bluetooth Disconnected";
+    setStatusIndicator(bleStatus, STATUS_COLORS.grey, "Bluetooth disconnected");
+    controlButton.textContent = "Connect BLE";
+    controlButton.disabled = false;
   }
-  
-  // Update GPS status
-  if (gpsReady) {
-    gpsStatus.textContent = "🟢";
-    gpsStatus.title = "GPS Active";
+  controlButton.style.backgroundColor = "#4caf50";
+
+  if (gpsPermissionState === "denied") {
+    setStatusIndicator(gpsStatus, STATUS_COLORS.red, "GPS permission denied");
+  } else if (gpsReady) {
+    setStatusIndicator(gpsStatus, STATUS_COLORS.green, "GPS active");
   } else {
-    gpsStatus.textContent = "🔴";
-    gpsStatus.title = "GPS Inactive";
+    setStatusIndicator(gpsStatus, STATUS_COLORS.grey, "GPS inactive");
   }
 }
 
 function updateRollingLog() {
   const logEntries = [];
   const maxEntries = 10;
-  
+
   // Get the last N entries that have both GPS and SOC data
   let gpsIndex = GPS.length - 1;
   let socIndex = SOC.length - 1;
-  
+
   while (logEntries.length < maxEntries && gpsIndex >= 0 && socIndex >= 0) {
     const gpsEntry = GPS[gpsIndex];
     const socEntry = SOC[socIndex];
-    
+
     // Try to match GPS and SOC entries by timestamp (within 30 seconds)
     const timeDiff = Math.abs(gpsEntry.timestamp - socEntry.d);
-    
+
     if (timeDiff < 30000) {
       // Close enough, create combined entry
-      const speed = gpsEntry.speed ? (gpsEntry.speed * 3.6).toFixed(1) : 'N/A';
+      const speed = gpsEntry.speed ? (gpsEntry.speed * 3.6).toFixed(1) : "N/A";
       logEntries.unshift(`
         <div style="border-bottom: 1px solid #ddd; padding: 5px 0;">
           <strong>${time(gpsEntry.timestamp)}</strong> | 
@@ -219,11 +241,11 @@ function updateRollingLog() {
       socIndex--;
     }
   }
-  
+
   if (logEntries.length > 0) {
-    rollingLogContent.innerHTML = logEntries.join('');
+    rollingLogContent.innerHTML = logEntries.join("");
   } else {
-    rollingLogContent.innerHTML = 'Waiting for GPS and SOC data...';
+    rollingLogContent.innerHTML = "Waiting for GPS and SOC data...";
   }
 }
 
@@ -233,10 +255,12 @@ function predict() {
     spark.setAttribute("d", socToSVG());
     return;
   }
-  
+
   // Only run calculations if both BLE and GPS are connected
   if (!isReady || !gpsReady) {
-    connectionStatus.innerText = `Waiting for connections... (BLE: ${isReady ? 'OK' : 'NO'}, GPS: ${gpsReady ? 'OK' : 'NO'})`;
+    connectionStatus.innerText = `Waiting for connections... (BLE: ${isReady ? "OK" : "NO"}, GPS: ${
+      gpsReady ? "OK" : "NO"
+    })`;
     spark.setAttribute("d", socToSVG());
     return;
   }
@@ -316,43 +340,47 @@ clearDataButton.addEventListener("click", clearAllData);
 function updateDischargeUI() {
   // Check if both connections are active before showing analysis
   if (!isReady || !gpsReady) {
-    dischargeAnalysisDiv.innerHTML = `<p>⚠️ Both Bluetooth and GPS must be active for discharge analysis. Current status: BLE ${isReady ? '✓' : '✗'}, GPS ${gpsReady ? '✓' : '✗'}</p>`;
+    dischargeAnalysisDiv.innerHTML = `<p>⚠️ Both Bluetooth and GPS must be active for discharge analysis. Current status: BLE ${
+      isReady ? "✓" : "✗"
+    }, GPS ${gpsReady ? "✓" : "✗"}</p>`;
     rangeEstimatesDiv.innerHTML = "<p>Waiting for connections...</p>";
     return;
   }
-  
+
   const analysis = window.batteryDischargeAnalysis || [];
-  
+
   if (analysis.length === 0) {
     dischargeAnalysisDiv.innerHTML = "<p>No data available yet. Keep driving to collect data.</p>";
     rangeEstimatesDiv.innerHTML = "<p>Insufficient data</p>";
     return;
   }
-  
+
   // Group by speed ranges (bins of 10 km/h)
   const speedBins = {};
-  analysis.forEach(a => {
+  analysis.forEach((a) => {
     const bin = Math.floor(a.speed / 10) * 10;
     if (!speedBins[bin]) {
       speedBins[bin] = [];
     }
     speedBins[bin].push(a.dischargeRate);
   });
-  
+
   // Calculate average discharge rate per speed bin
-  const binAverages = Object.keys(speedBins).map(bin => ({
-    speed: parseInt(bin),
-    avgDischarge: speedBins[bin].reduce((sum, d) => sum + d, 0) / speedBins[bin].length,
-    samples: speedBins[bin].length
-  })).sort((a, b) => a.speed - b.speed);
-  
+  const binAverages = Object.keys(speedBins)
+    .map((bin) => ({
+      speed: parseInt(bin),
+      avgDischarge: speedBins[bin].reduce((sum, d) => sum + d, 0) / speedBins[bin].length,
+      samples: speedBins[bin].length,
+    }))
+    .sort((a, b) => a.speed - b.speed);
+
   // Display discharge vs speed
   let html = "<table style='width: 100%; border-collapse: collapse;'>";
   html += "<tr><th style='border: 1px solid #ddd; padding: 8px;'>Speed (km/h)</th>";
   html += "<th style='border: 1px solid #ddd; padding: 8px;'>Discharge Rate (SOC/hr)</th>";
   html += "<th style='border: 1px solid #ddd; padding: 8px;'>Samples</th></tr>";
-  
-  binAverages.forEach(bin => {
+
+  binAverages.forEach((bin) => {
     html += `<tr>
       <td style='border: 1px solid #ddd; padding: 8px;'>${bin.speed}-${bin.speed + 10}</td>
       <td style='border: 1px solid #ddd; padding: 8px;'>${rnd(bin.avgDischarge, 2)}</td>
@@ -361,7 +389,7 @@ function updateDischargeUI() {
   });
   html += "</table>";
   dischargeAnalysisDiv.innerHTML = html;
-  
+
   // Calculate range estimates
   if (SOC.length > 0) {
     const currentSOC = SOC[SOC.length - 1].s;
@@ -369,14 +397,14 @@ function updateDischargeUI() {
     rangeHTML += "<tr><th style='border: 1px solid #ddd; padding: 8px;'>Speed (km/h)</th>";
     rangeHTML += "<th style='border: 1px solid #ddd; padding: 8px;'>Est. Range (km)</th>";
     rangeHTML += "<th style='border: 1px solid #ddd; padding: 8px;'>Est. Time</th></tr>";
-    
-    binAverages.forEach(bin => {
+
+    binAverages.forEach((bin) => {
       if (bin.avgDischarge > 0) {
         const hoursRemaining = currentSOC / bin.avgDischarge;
         const kmRemaining = hoursRemaining * (bin.speed + 5); // Use mid-point of speed range
         const hours = Math.floor(hoursRemaining);
         const minutes = Math.round((hoursRemaining - hours) * 60);
-        
+
         rangeHTML += `<tr>
           <td style='border: 1px solid #ddd; padding: 8px;'>${bin.speed}-${bin.speed + 10}</td>
           <td style='border: 1px solid #ddd; padding: 8px;'>${rnd(kmRemaining, 1)}</td>
@@ -449,17 +477,54 @@ function rnd(number, decimalPlaces) {
 }
 
 // GPS Tracking Functions
-function startGPSTracking() {
+async function ensureGPSPermission() {
+  if (!navigator.permissions || !navigator.permissions.query) {
+    gpsPermissionState = "prompt";
+    updateStatusIndicators();
+    return true;
+  }
+
+  try {
+    const status = await navigator.permissions.query({ name: "geolocation" });
+    gpsPermissionState = status.state;
+    updateStatusIndicators();
+
+    status.onchange = () => {
+      gpsPermissionState = status.state;
+      updateStatusIndicators();
+    };
+
+    if (status.state === "denied") {
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    gpsPermissionState = "unknown";
+    updateStatusIndicators();
+    return true;
+  }
+}
+
+async function startGPSTracking() {
   if (!navigator.geolocation) {
     l("GPS not supported by browser", true);
     gpsReady = false;
     updateStatusIndicators();
     return;
   }
-  
+
+  const permissionOk = await ensureGPSPermission();
+  if (!permissionOk) {
+    gpsReady = false;
+    updateStatusIndicators();
+    l("GPS permission denied");
+    return;
+  }
+
   // Get initial position
   getGPSPosition();
-  
+
   // Poll GPS every 10 seconds
   if (gpsIntervalId) {
     clearInterval(gpsIntervalId);
@@ -467,7 +532,7 @@ function startGPSTracking() {
   gpsIntervalId = setInterval(() => {
     getGPSPosition();
   }, gpsInterval);
-  
+
   l("GPS tracking started");
   gpsButton.textContent = "Stop GPS";
   gpsButton.style.backgroundColor = "#f44336";
@@ -488,6 +553,7 @@ function stopGPSTracking() {
 function getGPSPosition() {
   navigator.geolocation.getCurrentPosition(
     (position) => {
+      gpsPermissionState = "granted";
       const gpsData = {
         timestamp: new Date(),
         lat: position.coords.latitude,
@@ -495,16 +561,14 @@ function getGPSPosition() {
         speed: position.coords.speed, // m/s, may be null
         altitude: position.coords.altitude,
         heading: position.coords.heading,
-        accuracy: position.coords.accuracy
+        accuracy: position.coords.accuracy,
       };
       GPS.push(gpsData);
-      
+
       // Set GPS as ready after first successful read
-      if (!gpsReady) {
-        gpsReady = true;
-        updateStatusIndicators();
-      }
-      
+      gpsReady = true;
+      updateStatusIndicators();
+
       // Calculate speed if not provided by GPS
       if (GPS.length > 1 && !gpsData.speed) {
         const prev = GPS[GPS.length - 2];
@@ -512,19 +576,27 @@ function getGPSPosition() {
         const timeDiff = (gpsData.timestamp - prev.timestamp) / 1000; // seconds
         gpsData.speed = timeDiff > 0 ? distance / timeDiff : 0; // m/s
       }
-      
+
       // Keep last 1000 GPS points (about 2.7 hours at 10s intervals)
       if (GPS.length > 1000) {
         GPS.shift();
       }
-      
+
       updateBatteryDischargeAnalysis();
       updateRollingLog();
-      
+
       // Save to localStorage after GPS update
       saveDataToStorage();
     },
     (error) => {
+      if (error.code === error.PERMISSION_DENIED) {
+        gpsPermissionState = "denied";
+        gpsReady = false;
+        updateStatusIndicators();
+        l("GPS permission denied by user");
+        stopGPSTracking();
+        return;
+      }
       l(`GPS error: ${error.message}`);
       gpsReady = false;
       updateStatusIndicators();
@@ -532,7 +604,7 @@ function getGPSPosition() {
     {
       enableHighAccuracy: true,
       timeout: 5000,
-      maximumAge: 0
+      maximumAge: 0,
     }
   );
 }
@@ -540,16 +612,16 @@ function getGPSPosition() {
 // Calculate distance between two GPS coordinates using Haversine formula
 function calculateDistance(lat1, lon1, lat2, lon2) {
   const R = 6371e3; // Earth's radius in meters
-  const φ1 = lat1 * Math.PI / 180;
-  const φ2 = lat2 * Math.PI / 180;
-  const Δφ = (lat2 - lat1) * Math.PI / 180;
-  const Δλ = (lon2 - lon1) * Math.PI / 180;
-  
-  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const φ1 = (lat1 * Math.PI) / 180;
+  const φ2 = (lat2 * Math.PI) / 180;
+  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+  const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+
+  const a =
+    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  
+
   return R * c; // Distance in meters
 }
 
@@ -559,49 +631,56 @@ function updateBatteryDischargeAnalysis() {
   if (!isReady || !gpsReady) {
     return;
   }
-  
+
   if (SOC.length < 2 || GPS.length < 2) {
     return; // Need at least 2 data points
   }
-  
+
   // Find SOC and GPS data points that are close in time
   const analysis = [];
-  
+
   for (let i = 1; i < SOC.length; i++) {
     const socCurrent = SOC[i];
     const socPrevious = SOC[i - 1];
-    
+
     // Find GPS data around this SOC reading
-    const gpsDataInRange = GPS.filter(g => 
-      g.timestamp >= socPrevious.d && g.timestamp <= socCurrent.d
+    const gpsDataInRange = GPS.filter(
+      (g) => g.timestamp >= socPrevious.d && g.timestamp <= socCurrent.d
     );
-    
+
     if (gpsDataInRange.length > 0) {
       // Calculate average speed during this period
-      const avgSpeed = gpsDataInRange.reduce((sum, g) => sum + (g.speed || 0), 0) / gpsDataInRange.length;
-      
+      const avgSpeed =
+        gpsDataInRange.reduce((sum, g) => sum + (g.speed || 0), 0) / gpsDataInRange.length;
+
       // Calculate SOC discharge rate
       const socChange = socPrevious.s - socCurrent.s; // Positive means discharge
       const timeDiff = (socCurrent.d - socPrevious.d) / 1000 / 3600; // hours
       const dischargeRate = timeDiff > 0 ? socChange / timeDiff : 0; // SOC units per hour
-      
-      if (avgSpeed > 0.5) { // Only include if moving (> 0.5 m/s ≈ 1.8 km/h)
+
+      if (avgSpeed > 0.5) {
+        // Only include if moving (> 0.5 m/s ≈ 1.8 km/h)
         analysis.push({
           speed: avgSpeed * 3.6, // Convert m/s to km/h
           dischargeRate: dischargeRate,
-          timestamp: socCurrent.d
+          timestamp: socCurrent.d,
         });
       }
     }
   }
-  
+
   // Store analysis globally for UI access
   window.batteryDischargeAnalysis = analysis;
-  
+
   // Update UI with basic stats
   if (analysis.length > 0) {
     const avgDischarge = analysis.reduce((sum, a) => sum + a.dischargeRate, 0) / analysis.length;
-    l(`Avg discharge rate: ${rnd(avgDischarge, 2)} SOC/hr at avg speed ${rnd(analysis[analysis.length - 1].speed, 1)} km/h`);
+    l(
+      `Avg discharge rate: ${rnd(avgDischarge, 2)} SOC/hr at avg speed ${rnd(
+        analysis[analysis.length - 1].speed,
+        1
+      )} km/h`
+    );
   }
 }
 
@@ -653,10 +732,10 @@ function parseMessage(value) {
 
         socTimeLabel.innerText = time(now);
         socValueLabel.innerText = byte4And5;
-        
+
         // Update rolling log with new SOC data
         updateRollingLog();
-        
+
         // Save to localStorage after SOC update
         saveDataToStorage();
 
@@ -732,13 +811,13 @@ if ("serviceWorker" in navigator) {
         console.log("ServiceWorker registration failed: ", err);
       }
     );
-    
+
     // Initialize status indicators
     updateStatusIndicators();
-    
+
     // Load persisted data from localStorage
     loadPersistedData();
-    
+
     // Start GPS tracking when app loads
     startGPSTracking();
   });
@@ -762,7 +841,7 @@ async function executeMessageAwaitResponse() {
   const next = currentQueue.shift();
   if (!next) {
     connectionStatus.textContent = `READY`;
-    controlButton.textContent = "BLE Connected";
+    controlButton.textContent = "BLE connected";
     controlButton.style.backgroundColor = "#4caf50";
     controlButton.disabled = true;
     setTimeout(() => {
@@ -813,7 +892,7 @@ async function sendMessage(message) {
 function l(msg) {
   logData.push(msg);
   response.innerText = logData.slice(-100).join("\n");
-  
+
   // Debounce localStorage saves for logs (save every 10 log entries)
   if (logData.length % 10 === 0) {
     saveDataToStorage();
@@ -837,16 +916,31 @@ async function handleCharacteristicValueChanged(event) {
   hasReceivedResponse = true;
 }
 
+function handleBLEDisconnect() {
+  isReady = false;
+  writer = null;
+  notifiers = [];
+  bleDevice = null;
+  connectionStatus.textContent = "DISCONNECTED";
+  updateStatusIndicators();
+  l("BLE connection lost");
+}
+
 async function BLEManager() {
   // TTS
   connectionStatus.textContent = "SEARCHING";
   let device;
   try {
+    if (bleDevice) {
+      bleDevice.removeEventListener("gattserverdisconnected", handleBLEDisconnect);
+    }
     device = await navigator.bluetooth.requestDevice({
       filters: [{ name: "IOS-Vlink" }],
       //acceptAllDevices: true,
       optionalServices: Object.values(services).map((x) => x.id),
     });
+    bleDevice = device;
+    bleDevice.addEventListener("gattserverdisconnected", handleBLEDisconnect);
     connectionStatus.textContent = "CONNECTING";
     const connectedDevice = await device.gatt.connect();
 
@@ -931,6 +1025,7 @@ async function BLEManager() {
   } catch (e) {
     console.log(e);
     isReady = false;
+    bleDevice = null;
     updateStatusIndicators();
     if (typeof device !== "undefined") {
       connectionStatus.textContent = "CONNECTION FAILED";
