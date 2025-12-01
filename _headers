@@ -1,0 +1,9 @@
+/service-worker.js
+! ETag
+Cache-Control: max-age=0, no-cache, no-store, must-revalidate
+Pragma: no-cache
+
+/index.html
+! ETag
+Cache-Control: max-age=0, no-cache, no-store, must-revalidate
+Pragma: no-cache
