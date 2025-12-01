@@ -68,12 +68,12 @@ replaceInFile(scriptPath, [
 ]);
 
 // Update index.html script tag to include version query so browsers load the
-// new script when version changes.
+// new script when version changes. Replace only the src attribute so other
+// attributes (like `defer`) are preserved regardless of attribute order.
 replaceInFile(indexPath, [
   {
-    search:
-      /<script\s+src="\/?script\.js"\s+defer>\s*<\/script>|<script\s+src="\/?script\.js"\s+defer\s*><\/script>/i,
-    replace: `<script src="/script.js?v=${verTag}" defer></script>`,
+    search: /src=("|')\/?script\.js(?:\?[^"']*)?("|')/i,
+    replace: `src=\"/script.js?v=${verTag}\"`,
   },
 ]);
 
