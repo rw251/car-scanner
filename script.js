@@ -16,7 +16,7 @@ const gpsStatus = document.getElementById("gpsStatus");
 const rollingLogContent = document.getElementById("rollingLogContent");
 let interval = 30000; // Changed from 10s to 30s for battery SOC
 const gpsInterval = 10000; // GPS tracking every 10s
-const version = "v1.0.17";
+const version = "v1.0.18";
 const SOC = [];
 const GPS = []; // Store GPS coordinates with timestamps
 const logData = [];
@@ -827,6 +827,10 @@ let isReady = false;
 let writer;
 let notifiers;
 let awaitingResponse = false;
+// reconnect helpers
+let reconnectAttempts = 0;
+const RECONNECT_MAX = 6;
+const RECONNECT_BASE_MS = 1000;
 const enc = new TextEncoder("utf-8");
 const dec = new TextDecoder("utf-8");
 const resetQueue = ["ATZ", "ATD", "ATE0", "ATS0", "ATH0", "ATL0" /*,'ATAT2'*/];
@@ -920,10 +924,34 @@ function handleBLEDisconnect() {
   isReady = false;
   writer = null;
   notifiers = [];
-  bleDevice = null;
   connectionStatus.textContent = "DISCONNECTED";
   updateStatusIndicators();
   l("BLE connection lost");
+  // start reconnect attempts using the retained `bleDevice`
+  attemptReconnect();
+}
+
+async function attemptReconnect() {
+  if (!bleDevice) return;
+  reconnectAttempts++;
+  const delay = RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts - 1);
+  connectionStatus.textContent = `RECONNECTING (attempt ${reconnectAttempts})`;
+  try {
+    await new Promise((res) => setTimeout(res, delay));
+    const server = await bleDevice.gatt.connect();
+    // on success, reset attempts and re-run post-connect setup
+    reconnectAttempts = 0;
+    await setupAfterConnect(server);
+    connectionStatus.textContent = "CONNECTED";
+    l("BLE reconnected");
+  } catch (err) {
+    l(`Reconnect attempt ${reconnectAttempts} failed: ${err && err.message ? err.message : err}`);
+    if (reconnectAttempts < RECONNECT_MAX) {
+      attemptReconnect();
+    } else {
+      connectionStatus.textContent = "RECONNECT FAILED";
+    }
+  }
 }
 
 async function BLEManager() {
@@ -941,87 +969,10 @@ async function BLEManager() {
     });
     bleDevice = device;
     bleDevice.addEventListener("gattserverdisconnected", handleBLEDisconnect);
+    // connect and run post-connect setup
     connectionStatus.textContent = "CONNECTING";
     const connectedDevice = await device.gatt.connect();
-
-    connectionStatus.textContent = "GETTING SERVICES";
-    services.main.service = await connectedDevice.getPrimaryService(services.main.id);
-    services.deviceInformation.service = await connectedDevice.getPrimaryService(
-      services.deviceInformation.id
-    );
-    services.unknown.service = await connectedDevice.getPrimaryService(services.unknown.id);
-    services.genericAttribute.service = await connectedDevice.getPrimaryService(
-      services.genericAttribute.id
-    );
-    services.genericAccess.service = await connectedDevice.getPrimaryService(
-      services.genericAccess.id
-    );
-
-    connectionStatus.textContent = "GETTING CHARACTERISTICS";
-    services.main.characteristics = await services.main.service.getCharacteristics();
-    services.deviceInformation.characteristics =
-      await services.deviceInformation.service.getCharacteristics();
-    services.unknown.characteristics = await services.unknown.service.getCharacteristics();
-    services.genericAttribute.characteristics =
-      await services.genericAttribute.service.getCharacteristics();
-    services.genericAccess.characteristics =
-      await services.genericAccess.service.getCharacteristics();
-
-    services.main.characteristics.forEach((characteristic, index) => {
-      characteristics.push({ type: "main", index, characteristic });
-    });
-    services.deviceInformation.characteristics.forEach((characteristic, index) => {
-      characteristics.push({
-        type: "deviceInformation",
-        index,
-        characteristic,
-      });
-    });
-    services.unknown.characteristics.forEach((characteristic, index) => {
-      characteristics.push({ type: "unknown", index, characteristic });
-    });
-    services.genericAttribute.characteristics.forEach((characteristic, index) => {
-      characteristics.push({
-        type: "genericAttribute",
-        index,
-        characteristic,
-      });
-    });
-    services.genericAccess.characteristics.forEach((characteristic, index) => {
-      characteristics.push({ type: "genericAccess", index, characteristic });
-    });
-
-    const writers = characteristics.filter(({ characteristic }) => characteristic.properties.write);
-    notifiers = characteristics.filter(({ characteristic }) => characteristic.properties.notify);
-
-    writers.forEach(({ type, index, characteristic }) => {
-      const option = document.createElement("option");
-      option.value = `${type}-${index}`;
-      option.innerText = `${type}-${index}`;
-    });
-
-    for (let notifier of notifiers) {
-      if (notifier.type !== "main") continue;
-      l(`Start listening to ${notifier.type}-${notifier.index}...`, true);
-      await notifier.characteristic.startNotifications();
-      notifier.characteristic.addEventListener(
-        "characteristicvaluechanged",
-        handleCharacteristicValueChanged
-      );
-      l(`Now listening to ${notifier.type}-${notifier.index}.`, true);
-    }
-
-    connectionStatus.textContent = "CONNECTED";
-    isReady = true;
-    updateStatusIndicators();
-
-    // select1.addEventListener("change", () => {
-    //   const [attr, index] = select1.value.split("-");
-    //   writer = services[attr].characteristics[+index];
-    // });
-    writer = writers[0].characteristic;
-
-    await reset();
+    await setupAfterConnect(connectedDevice);
   } catch (e) {
     console.log(e);
     isReady = false;
@@ -1033,6 +984,79 @@ async function BLEManager() {
       connectionStatus.textContent = "CANCELLED";
     }
   }
+}
+
+// Post-connect setup extracted so reconnect logic can reuse it
+async function setupAfterConnect(connectedDevice) {
+  connectionStatus.textContent = "GETTING SERVICES";
+  services.main.service = await connectedDevice.getPrimaryService(services.main.id);
+  services.deviceInformation.service = await connectedDevice.getPrimaryService(
+    services.deviceInformation.id
+  );
+  services.unknown.service = await connectedDevice.getPrimaryService(services.unknown.id);
+  services.genericAttribute.service = await connectedDevice.getPrimaryService(
+    services.genericAttribute.id
+  );
+  services.genericAccess.service = await connectedDevice.getPrimaryService(
+    services.genericAccess.id
+  );
+
+  connectionStatus.textContent = "GETTING CHARACTERISTICS";
+  services.main.characteristics = await services.main.service.getCharacteristics();
+  services.deviceInformation.characteristics =
+    await services.deviceInformation.service.getCharacteristics();
+  services.unknown.characteristics = await services.unknown.service.getCharacteristics();
+  services.genericAttribute.characteristics =
+    await services.genericAttribute.service.getCharacteristics();
+  services.genericAccess.characteristics =
+    await services.genericAccess.service.getCharacteristics();
+
+  characteristics.length = 0;
+  services.main.characteristics.forEach((characteristic, index) => {
+    characteristics.push({ type: "main", index, characteristic });
+  });
+  services.deviceInformation.characteristics.forEach((characteristic, index) => {
+    characteristics.push({
+      type: "deviceInformation",
+      index,
+      characteristic,
+    });
+  });
+  services.unknown.characteristics.forEach((characteristic, index) => {
+    characteristics.push({ type: "unknown", index, characteristic });
+  });
+  services.genericAttribute.characteristics.forEach((characteristic, index) => {
+    characteristics.push({
+      type: "genericAttribute",
+      index,
+      characteristic,
+    });
+  });
+  services.genericAccess.characteristics.forEach((characteristic, index) => {
+    characteristics.push({ type: "genericAccess", index, characteristic });
+  });
+
+  const writers = characteristics.filter(({ characteristic }) => characteristic.properties.write);
+  notifiers = characteristics.filter(({ characteristic }) => characteristic.properties.notify);
+
+  for (let notifier of notifiers) {
+    if (notifier.type !== "main") continue;
+    l(`Start listening to ${notifier.type}-${notifier.index}...`, true);
+    await notifier.characteristic.startNotifications();
+    notifier.characteristic.addEventListener(
+      "characteristicvaluechanged",
+      handleCharacteristicValueChanged
+    );
+    l(`Now listening to ${notifier.type}-${notifier.index}.`, true);
+  }
+
+  connectionStatus.textContent = "CONNECTED";
+  isReady = true;
+  updateStatusIndicators();
+
+  writer = writers[0] ? writers[0].characteristic : null;
+
+  await reset();
 }
 
 /*
