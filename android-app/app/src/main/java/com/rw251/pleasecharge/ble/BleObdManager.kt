@@ -219,21 +219,6 @@ class BleObdManager(
             listener.onError("Scan permission error", e)
             listener.onLog("SecurityException starting scan: ${e.message}")
         }
-
-        // Fallback: after 5s, if still SCANNING, start an unfiltered scan
-        scope.launch(Dispatchers.Main) {
-            delay(5000)
-            if (currentState == State.SCANNING) {
-                listener.onLog("No devices discovered with filter - falling back to full scan")
-                try {
-                    stopScanSafe()
-                    scanner?.startScan(null, settings, scanCallback)
-                    listener.onLog("Scanning (all devices)...")
-                } catch (ex: SecurityException) {
-                    listener.onLog("Fallback scan failed: ${ex.message}")
-                }
-            }
-        }
     }
 
     private fun stopScanSafe() {
