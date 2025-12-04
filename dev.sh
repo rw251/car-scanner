@@ -117,13 +117,12 @@ build_app() {
     echo "🔨 Building Widget APK..."
     echo "========================================"
 
-    cd "$APP_DIR"
-    ./gradlew assembleDebug
+    (cd "$APP_DIR" && ./gradlew assembleDebug)
     
     if [ $? -eq 0 ]; then
         echo "✅ Build successful!"
         
-        local apk_path="app/build/outputs/apk/debug/app-debug.apk"
+        local apk_path="$APP_DIR/app/build/outputs/apk/debug/app-debug.apk"
         if [ -f "$apk_path" ]; then
             local size=$(du -h "$apk_path" | cut -f1)
             echo "📦 APK size: $size"
@@ -147,8 +146,7 @@ build_and_deploy() {
         echo ""
         echo "📱 Installing APK to device..."
         
-        local apk_path="app/build/outputs/apk/debug/app-debug.apk"
-        cd "$APP_DIR"
+        local apk_path="$APP_DIR/app/build/outputs/apk/debug/app-debug.apk"
         $ADB install -r "$apk_path"
         
         if [ $? -eq 0 ]; then
@@ -185,8 +183,7 @@ export_logs() {
     
     # Export logs from device storage
     local log_path="/data/data/com.rw251.pleasecharge/files/widget_log.txt"
-    local local_file="widget_logs.txt"
-    cd "$APP_DIR"
+    local local_file="$ROOT_DIR/widget_logs.txt"
     $ADB shell "run-as com.rw251.pleasecharge cat $log_path" > "$local_file"
 
     if [ -f "$local_file" ]; then
