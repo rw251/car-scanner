@@ -1,11 +1,11 @@
 package com.rw251.pleasecharge.ble
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.bluetooth.*
 import android.bluetooth.le.*
 import android.content.Context
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.ParcelUuid
 import androidx.annotation.RequiresPermission
 import androidx.core.content.ContextCompat
@@ -13,17 +13,21 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.nio.charset.Charset
 import java.util.*
 
 /**
- * BLE + OBD manager implementing the language-agnostic spec derived from the web app.
+ * BLE + OBD manager implementing a state machine for connection management.
+ * 
+ * States: IDLE → SCANNING → CONNECTING → DISCOVERING → CONFIGURING → READY
+ * 
+ * Features:
  * - Scans for device named "IOS-Vlink" or with the main service UUID
  * - Connects, discovers GATT, enables notifications, selects a writer
- * - Runs init AT queue, then polls SOC and Temp periodically
- * - Notifies client via callbacks; auto-reconnect on drop
+ * - Runs init AT queue (ATZ, ATD, ATE0, ATS0, ATH0, ATL0) once
+ * - Exposes requestSoc() for one-shot SOC requests (no auto-polling)
+ * - Optional single retry reconnect with backoff on disconnect
  */
 class BleObdManager(
     private val context: Context,
@@ -32,10 +36,11 @@ class BleObdManager(
 ) {
     enum class State {
         IDLE,           // Not connected, not attempting
-        SEARCHING,      // Scanning for device
+        SCANNING,       // Scanning for device
         CONNECTING,     // Connecting to device
+        DISCOVERING,    // Discovering GATT services
         CONFIGURING,    // Running init AT queue
-        READY           // Connected and polling
+        READY           // Connected and ready for commands
     }
 
     interface Listener {
@@ -53,12 +58,8 @@ class BleObdManager(
     private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
     private val scanner: BluetoothLeScanner? get() = bluetoothAdapter?.bluetoothLeScanner
 
-    // UUIDs as per JS
+    // UUIDs as per JS spec
     private val SERVICE_MAIN = UUID.fromString("e7810a71-73ae-499d-8c15-faa9aef0c3f2")
-    private val SERVICE_DEVICE_INFO = UUID.fromString("0000180a-0000-1000-8000-00805f9b34fb")
-    private val SERVICE_GATT = UUID.fromString("00001801-0000-1000-8000-00805f9b34fb")
-    private val SERVICE_GAP = UUID.fromString("00001800-0000-1000-8000-00805f9b34fb")
-
     private val CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
     private val TARGET_NAME = "IOS-Vlink"
@@ -68,59 +69,59 @@ class BleObdManager(
     private var notifier: BluetoothGattCharacteristic? = null
 
     private val atInitQueue = ArrayDeque(listOf("ATZ", "ATD", "ATE0", "ATS0", "ATH0", "ATL0"))
+    private var initComplete = false
     private val inboundBuffer = StringBuilder()
     private var waitingForResponse = false
     private var pendingNotificationDescriptor: BluetoothGattDescriptor? = null
 
     private var reconnectJob: Job? = null
-    private var pollingJob: Job? = null
+    private var reconnectAttempts = 0
+    private val maxReconnectAttempts = 1  // Single retry per plan
 
     private var currentState: State = State.IDLE
         set(value) {
-            field = value
-            listener.onStateChanged(value)
+            if (field != value) {
+                field = value
+                listener.onLog("State: $value")
+                listener.onStateChanged(value)
+            }
         }
 
     private fun hasPerm(permission: String): Boolean =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 
     fun hasAllPermissions(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            hasPerm(Manifest.permission.BLUETOOTH_SCAN) && hasPerm(Manifest.permission.BLUETOOTH_CONNECT)
-        } else {
-            val locationGranted = hasPerm(Manifest.permission.ACCESS_FINE_LOCATION) || hasPerm(Manifest.permission.ACCESS_COARSE_LOCATION)
-            hasPerm(Manifest.permission.BLUETOOTH) &&
-                hasPerm(Manifest.permission.BLUETOOTH_ADMIN) &&
-                locationGranted
-        }
+        return hasPerm(Manifest.permission.BLUETOOTH_SCAN) && hasPerm(Manifest.permission.BLUETOOTH_CONNECT) && hasPerm(Manifest.permission.ACCESS_FINE_LOCATION)
     }
 
     @RequiresPermission(allOf = [
         Manifest.permission.BLUETOOTH_SCAN,
-        Manifest.permission.BLUETOOTH_CONNECT
+        Manifest.permission.BLUETOOTH_CONNECT,
+        Manifest.permission.ACCESS_FINE_LOCATION
     ])
     fun start() {
+        if (!hasAllPermissions()) {
+            listener.onError("Missing BLE permissions")
+            listener.onLog("Cannot start: missing permissions")
+            return
+        }
+        
         stop() // clean slate
-        currentState = State.SEARCHING
-        listener.onStatus("SEARCHING")
-        listener.onLog("Start scan for $TARGET_NAME or $SERVICE_MAIN")
+        reconnectAttempts = 0
+        currentState = State.SCANNING
+        listener.onStatus("SCANNING")
+        listener.onLog("Start scan for $TARGET_NAME or service $SERVICE_MAIN")
         startScan()
+        // startDiagnosticUnfilteredScan()
     }
 
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     fun stop() {
-        stopScan()
-        pollingJob?.cancel()
+        stopScanSafe()
         reconnectJob?.cancel()
-        gatt?.close()
-        gatt = null
-        writer = null
-        notifier = null
-        atInitQueue.clear()
-        atInitQueue.addAll(listOf("ATZ", "ATD", "ATE0", "ATS0", "ATH0", "ATL0"))
-        inboundBuffer.clear()
-        waitingForResponse = false
-        pendingNotificationDescriptor = null
+        reconnectJob = null
+        closeGatt()
+        resetInternalState()
         currentState = State.IDLE
         listener.onStatus("IDLE")
         listener.onLog("Stopped")
@@ -131,21 +132,60 @@ class BleObdManager(
      */
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     fun cancel() {
-        stopScan()
-        pollingJob?.cancel()
+        stopScanSafe()
         reconnectJob?.cancel()
-        gatt?.close()
-        gatt = null
+        reconnectJob = null
+        closeGatt()
+        resetInternalState()
+        currentState = State.IDLE
+        listener.onStatus("CANCELLED")
+        listener.onLog("Cancelled")
+    }
+
+    /**
+     * Request SOC once. Only works when state == READY.
+     * Sends 22B046 command and the response will be delivered via onSoc callback.
+     */
+    fun requestSoc() {
+        if (currentState != State.READY) {
+            listener.onError("Not ready - cannot request SOC")
+            listener.onLog("requestSoc() called but state is $currentState")
+            return
+        }
+        listener.onLog("Requesting SOC (22B046)")
+        send("22B046")
+    }
+
+    /**
+     * Request battery temperature once. Only works when state == READY.
+     */
+//    fun requestTemp() {
+//        if (currentState != State.READY) {
+//            listener.onError("Not ready - cannot request temp")
+//            return
+//        }
+//        listener.onLog("Requesting temp (22B056)")
+//        send("22B056")
+//    }
+
+    private fun resetInternalState() {
         writer = null
         notifier = null
         atInitQueue.clear()
         atInitQueue.addAll(listOf("ATZ", "ATD", "ATE0", "ATS0", "ATH0", "ATL0"))
+        initComplete = false
         inboundBuffer.clear()
         waitingForResponse = false
         pendingNotificationDescriptor = null
-        currentState = State.IDLE
-        listener.onStatus("CANCELLED")
-        listener.onLog("Cancelled connection/scan")
+    }
+
+    private fun closeGatt() {
+        try {
+            gatt?.close()
+        } catch (e: SecurityException) {
+            listener.onLog("SecurityException closing GATT: ${e.message}")
+        }
+        gatt = null
     }
 
     @RequiresPermission(Manifest.permission.BLUETOOTH_SCAN)
@@ -156,30 +196,77 @@ class BleObdManager(
         )
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setReportDelay(0)
             .build()
-        scanner?.startScan(filters, settings, scanCallback)
-        listener.onLog("Scanning...")
+
+        // If Bluetooth Adapter not enabled, log and skip
+        if (bluetoothAdapter == null) {
+            listener.onError("Bluetooth adapter not present")
+            listener.onLog("Bluetooth adapter missing; cannot scan")
+            return
+        }
+        if (!bluetoothAdapter.isEnabled) {
+            listener.onError("Bluetooth adapter not enabled")
+            listener.onLog("Bluetooth adapter is disabled; enable Bluetooth and retry")
+            return
+        }
+        try {
+            // Start with a filtered scan; if nothing found after a short timeout
+            // we'll fall back to scanning for all advertising devices.
+            scanner?.startScan(filters, settings, scanCallback)
+            listener.onLog("Scanning (filtered)...")
+        } catch (e: SecurityException) {
+            listener.onError("Scan permission error", e)
+            listener.onLog("SecurityException starting scan: ${e.message}")
+        }
+
+        // Fallback: after 5s, if still SCANNING, start an unfiltered scan
+        scope.launch(Dispatchers.Main) {
+            delay(5000)
+            if (currentState == State.SCANNING) {
+                listener.onLog("No devices discovered with filter - falling back to full scan")
+                try {
+                    stopScanSafe()
+                    scanner?.startScan(null, settings, scanCallback)
+                    listener.onLog("Scanning (all devices)...")
+                } catch (ex: SecurityException) {
+                    listener.onLog("Fallback scan failed: ${ex.message}")
+                }
+            }
+        }
     }
 
-    @RequiresPermission(Manifest.permission.BLUETOOTH_SCAN)
-    private fun stopScan() {
-        scanner?.stopScan(scanCallback)
+    private fun stopScanSafe() {
+        try {
+            scanner?.stopScan(scanCallback)
+        } catch (e: SecurityException) {
+            listener.onLog("SecurityException stopping scan: ${e.message}")
+        }
     }
 
     private val scanCallback = object : ScanCallback() {
         @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
         override fun onScanResult(callbackType: Int, result: ScanResult) {
+            listener.onLog("Scan result received")
             val device = result.device ?: return
-            val name = result.scanRecord?.deviceName ?: device.name
-            if (name == TARGET_NAME || result.scanRecord?.serviceUuids?.any { it.uuid == SERVICE_MAIN } == true) {
-                stopScan()
-                listener.onLog("Found device: name=$name, address=${device.address}")
+            val record = result.scanRecord
+            val name = record?.deviceName ?: device.name ?: "<unknown>"
+            val addr = device.address
+            val uuids = record?.serviceUuids?.joinToString(",") { it.uuid.toString() } ?: ""
+            listener.onLog("Scan result: name=$name addr=$addr uuids=$uuids")
+
+            val targetMatch = name.equals(TARGET_NAME, ignoreCase = true) ||
+                    (record?.serviceUuids?.any { it.uuid == SERVICE_MAIN } == true)
+            if (targetMatch) {
+                stopScanSafe()
+                listener.onLog("Found target device: name=$name, address=$addr")
                 connect(device)
             }
         }
+
         override fun onScanFailed(errorCode: Int) {
             listener.onError("Scan failed: $errorCode")
-            listener.onLog("Scan failed: $errorCode")
+            listener.onLog("Scan failed with error code: $errorCode")
             scheduleReconnect()
         }
     }
@@ -193,7 +280,8 @@ class BleObdManager(
             gatt = device.connectGatt(context, false, gattCallback)
         } catch (e: SecurityException) {
             listener.onError("Connect permission error", e)
-            listener.onLog("Connect permission error: ${e.message}")
+            listener.onLog("SecurityException connecting: ${e.message}")
+            scheduleReconnect()
         }
     }
 
@@ -202,20 +290,29 @@ class BleObdManager(
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 listener.onError("Connection error: $status")
-                listener.onLog("Connection error: $status, state=$newState")
-                gatt.close()
+                listener.onLog("Connection error: status=$status, newState=$newState")
+                closeGatt()
                 scheduleReconnect()
                 return
             }
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
-                listener.onStatus("GETTING SERVICES")
-                listener.onLog("Connected, discovering services")
-                gatt.discoverServices()
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                listener.onStatus("DISCONNECTED")
-                listener.onLog("Disconnected")
-                gatt.close()
-                scheduleReconnect()
+            when (newState) {
+                BluetoothProfile.STATE_CONNECTED -> {
+                    currentState = State.DISCOVERING
+                    listener.onStatus("DISCOVERING SERVICES")
+                    listener.onLog("Connected, discovering services...")
+                    try {
+                        gatt.discoverServices()
+                    } catch (e: SecurityException) {
+                        listener.onError("Discover services permission error", e)
+                        scheduleReconnect()
+                    }
+                }
+                BluetoothProfile.STATE_DISCONNECTED -> {
+                    listener.onStatus("DISCONNECTED")
+                    listener.onLog("Disconnected")
+                    closeGatt()
+                    scheduleReconnect()
+                }
             }
         }
 
@@ -223,38 +320,48 @@ class BleObdManager(
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 listener.onError("Service discovery failed: $status")
-                listener.onLog("Service discovery failed: $status")
+                listener.onLog("Service discovery failed with status: $status")
                 scheduleReconnect()
                 return
             }
+            
             val services = gatt.services.orEmpty()
-            listener.onLog("Services discovered: ${services.map { it.uuid }}")
+            listener.onLog("Services discovered: ${services.size} services")
+            services.forEach { s ->
+                listener.onLog("  Service: ${s.uuid}")
+            }
+            
             val allChars = services.flatMap { s -> s.characteristics.map { s to it } }
+            
             // Writer: any characteristic that supports write or write_no_response, prefer in MAIN service
             writer = allChars
-                .filter { (s, c) -> (c.properties and (BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE)) != 0 }
-                .sortedByDescending { (s, _) -> s.uuid == SERVICE_MAIN }
-                .firstOrNull()?.second
+                .filter { (_, c) ->
+                    (c.properties and (BluetoothGattCharacteristic.PROPERTY_WRITE or
+                            BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE)) != 0
+                }.maxByOrNull { (s, _) -> s.uuid == SERVICE_MAIN }?.second
 
             // Notifier: any NOTIFY char in MAIN service
             notifier = allChars
-                .firstOrNull { (s, c) -> s.uuid == SERVICE_MAIN && (c.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0 }
-                ?.second
+                .firstOrNull { (s, c) -> 
+                    s.uuid == SERVICE_MAIN && 
+                    (c.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0 
+                }?.second
 
             if (writer == null || notifier == null) {
-                listener.onError("Writer or notifier not found")
-                listener.onLog("Writer or notifier not found")
+                listener.onError("Writer or notifier characteristic not found")
+                listener.onLog("Writer=${writer?.uuid}, Notifier=${notifier?.uuid}")
                 scheduleReconnect()
                 return
             }
 
-            listener.onLog("Writer=${writer?.uuid}, Notifier=${notifier?.uuid}")
+            listener.onLog("Writer: ${writer?.uuid}")
+            listener.onLog("Notifier: ${notifier?.uuid}")
             enableNotifications(gatt, notifier!!)
         }
 
-        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            val data = characteristic.value ?: return
-            val chunk = data.toString(Charset.forName("UTF-8")).replace("\u0000", "")
+        override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
+//            val data = gatt.readCharacteristic(characteristic)
+            val chunk = value.toString(Charset.forName("UTF-8")).replace("\u0000", "")
             if (chunk.isEmpty()) return
             handleNotificationChunk(chunk)
         }
@@ -273,7 +380,7 @@ class BleObdManager(
                 runInitQueue()
             } else {
                 listener.onError("Failed to enable notifications: $status")
-                listener.onLog("Descriptor write failed: $status for ${descriptor.characteristic.uuid}")
+                listener.onLog("CCCD write failed with status: $status")
                 scheduleReconnect()
             }
         }
@@ -281,7 +388,9 @@ class BleObdManager(
 
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     private fun enableNotifications(gatt: BluetoothGatt, ch: BluetoothGattCharacteristic) {
-        listener.onStatus("GETTING CHARACTERISTICS")
+        currentState = State.CONFIGURING
+        listener.onStatus("ENABLING NOTIFICATIONS")
+        
         val ok = gatt.setCharacteristicNotification(ch, true)
         if (!ok) {
             listener.onError("Failed to enable characteristic notifications")
@@ -289,76 +398,90 @@ class BleObdManager(
             scheduleReconnect()
             return
         }
+        
         val cccd = ch.getDescriptor(CCCD_UUID)
         if (cccd != null) {
             cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
             pendingNotificationDescriptor = cccd
-            val wrote = gatt.writeDescriptor(cccd)
-            if (!wrote) {
+            try {
+                val wrote = gatt.writeDescriptor(cccd)
+                if (!wrote) {
+                    pendingNotificationDescriptor = null
+                    listener.onError("Failed to write CCCD descriptor")
+                    listener.onLog("writeDescriptor returned false")
+                    scheduleReconnect()
+                }
+            } catch (e: SecurityException) {
                 pendingNotificationDescriptor = null
-                listener.onError("Failed to write CCCD descriptor")
-                listener.onLog("writeDescriptor returned false for ${ch.uuid}")
+                listener.onError("CCCD write permission error", e)
                 scheduleReconnect()
             }
         } else {
-            listener.onLog("CCCD descriptor missing for ${ch.uuid}; proceeding without write")
+            listener.onLog("CCCD descriptor missing; proceeding without CCCD write")
             runInitQueue()
         }
     }
 
     private fun runInitQueue() {
-        currentState = State.CONFIGURING
         listener.onStatus("CONFIGURING")
-        nextInQueueOrStartPolling()
+        listener.onLog("Running AT init queue...")
+        processNextInitCommand()
     }
 
-    private fun nextInQueueOrStartPolling() {
-        val cmd = if (atInitQueue.isEmpty()) null else atInitQueue.removeFirst()
-        if (cmd != null) {
-            send(cmd)
-            return
-        }
-
-        if (currentState != State.READY) {
+    private fun processNextInitCommand() {
+        if (atInitQueue.isEmpty()) {
+            // Init complete - transition to READY
+            initComplete = true
             currentState = State.READY
             listener.onStatus("READY")
-            listener.onLog("Init complete; starting polling")
+            listener.onLog("Init complete - READY for commands")
             listener.onReady()
+            reconnectAttempts = 0  // Reset on successful connection
+            return
         }
-
-        if (pollingJob?.isActive != true) {
-            startPolling()
-        }
+        
+        val cmd = atInitQueue.removeFirst()
+        send(cmd)
     }
 
     private fun send(command: String) {
-        val w = writer ?: return
-        val g = gatt ?: return
+        val w = writer ?: run {
+            listener.onError("No writer characteristic")
+            return
+        }
+        val g = gatt ?: run {
+            listener.onError("No GATT connection")
+            return
+        }
+        
         val bytes = (command + "\r").toByteArray(Charset.forName("UTF-8"))
         w.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
         w.value = bytes
+        
         try {
             val ok = g.writeCharacteristic(w)
             if (!ok) {
-                listener.onError("Write failed to enqueue: $command")
+                listener.onError("Write failed: $command")
+                listener.onLog("writeCharacteristic returned false for: $command")
             } else {
                 waitingForResponse = true
                 listener.onStatus("Sending: $command")
-                listener.onLog("Sending: $command")
+                listener.onLog("TX: $command")
             }
         } catch (e: SecurityException) {
             listener.onError("Write permission error", e)
-            listener.onLog("Write permission error: ${e.message}")
+            listener.onLog("SecurityException writing: ${e.message}")
         }
     }
 
     private fun handleNotificationChunk(chunk: String) {
         inboundBuffer.append(chunk)
+        
+        // Process complete messages (terminated by '>')
         while (true) {
             val promptIndex = inboundBuffer.indexOf(">")
-            if (promptIndex == -1) {
-                break
-            }
+            if (promptIndex == -1) break
+            
             val message = inboundBuffer.substring(0, promptIndex)
             inboundBuffer.delete(0, promptIndex + 1)
 
@@ -368,50 +491,47 @@ class BleObdManager(
                 .filter { it.isNotEmpty() }
 
             if (lines.isNotEmpty()) {
-                listener.onLog("Received: ${lines.joinToString(" | ")}")
+                listener.onLog("RX: ${lines.joinToString(" | ")}")
             }
 
-            notifyProcessingComplete(lines)
+            processResponse(lines)
         }
     }
 
-    private fun notifyProcessingComplete(lines: List<String>) {
-        val shouldAdvance = waitingForResponse
+    private fun processResponse(lines: List<String>) {
+        val shouldAdvanceInit = waitingForResponse && !initComplete
+        
         scope.launch(Dispatchers.Main) {
-            delay(250)
-            lines.forEach { processLine(it) }
-            if (shouldAdvance) {
-                waitingForResponse = false
-                nextInQueueOrStartPolling()
+            delay(100)  // Small delay before processing
+            
+            lines.forEach { line ->
+                parseOBDResponse(line)
+            }
+            
+            waitingForResponse = false
+            
+            if (shouldAdvanceInit) {
+                processNextInitCommand()
             }
         }
     }
 
-    private fun startPolling() {
-        pollingJob?.cancel()
-        pollingJob = scope.launch(Dispatchers.IO) {
-            // initial small delay similar to JS
-            delay(500)
-            send("22B046") // SOC
-            while (isActive) {
-                delay(30_000)
-                send("22B046")
-                delay(500)
-                send("22B056") // battery temp
-            }
-        }
-    }
-
-    private fun processLine(value: String) {
-        // Expect 62xxxx + AABB
+    private fun parseOBDResponse(value: String) {
         val cleaned = value.trim()
         if (cleaned.isEmpty()) return
 
         val upper = cleaned.uppercase(Locale.US)
-        if (upper == "OK" || upper.startsWith("AT") || upper.contains("ELM") || upper.contains("SEARCHING")) {
+        
+        // Skip AT responses, OK, info messages
+        if (upper == "OK" || 
+            upper.startsWith("AT") || 
+            upper.contains("ELM") || 
+            upper.contains("SEARCHING") ||
+            upper.contains("STOPPED")) {
             return
         }
 
+        // Expect 62xxxx + payload (response to mode 22 request)
         val hex = upper.replace("\\s".toRegex(), "")
         if (!hex.startsWith("62") || hex.length < 10) return
 
@@ -426,38 +546,59 @@ class BleObdManager(
         val now = System.currentTimeMillis()
 
         when (header) {
-            "62B046" -> { // SOC
+            "62B046" -> { // SOC response
                 val soc93 = raw / 9.3
                 val soc95 = raw / 9.5
                 val soc97 = raw / 9.7
+                listener.onLog("SOC parsed: raw=$raw, ~${String.format("%.1f", soc95)}%")
                 listener.onSoc(raw, soc93, soc95, soc97, now)
             }
-            "62B061" -> {
-                // SOH (not polled by default)
+            "62B061" -> { // SOH (State of Health)
+                listener.onLog("SOH raw: $raw")
             }
-            "62B042" -> {
-                // Voltage = raw / 4.0
+            "62B042" -> { // Voltage
+                val voltage = raw / 4.0
+                listener.onLog("Voltage: ${String.format("%.1f", voltage)} V")
             }
-            "62B043" -> {
-                // Current = (raw - 40000) * 0.025
+            "62B043" -> { // Current
+                val current = (raw - 40000) * 0.025
+                listener.onLog("Current: ${String.format("%.2f", current)} A")
             }
             "62B056" -> { // Battery temp
                 if (raw != 0) {
                     val temp = (a / 2.0) - 40.0
+                    listener.onLog("Temp parsed: ${String.format("%.1f", temp)} °C")
                     listener.onTemp(temp, now)
                 }
             }
         }
     }
 
+    @SuppressLint("MissingPermission")
     private fun scheduleReconnect() {
+        if (reconnectAttempts >= maxReconnectAttempts) {
+            listener.onStatus("DISCONNECTED")
+            listener.onLog("Max reconnect attempts reached")
+            currentState = State.IDLE
+            return
+        }
+        
         reconnectJob?.cancel()
         reconnectJob = scope.launch(Dispatchers.IO) {
-            listener.onStatus("RECONNECTING IN 3s")
-            listener.onLog("Scheduling reconnect in 3s")
-            delay(3000)
+            val backoffMs = 300L * (reconnectAttempts + 1)
+            reconnectAttempts++
+            listener.onStatus("RECONNECTING in ${backoffMs/1000}s (attempt $reconnectAttempts)")
+            listener.onLog("Scheduling reconnect in ${backoffMs}ms (attempt $reconnectAttempts)")
+            delay(backoffMs)
+            
             if (hasAllPermissions()) {
-                start()
+                resetInternalState()
+                currentState = State.SCANNING
+                listener.onStatus("SCANNING")
+                startScan()
+            } else {
+                listener.onError("Missing permissions for reconnect")
+                currentState = State.IDLE
             }
         }
     }
