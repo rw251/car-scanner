@@ -23,7 +23,7 @@ import java.util.*
  * States: IDLE → SCANNING → CONNECTING → DISCOVERING → CONFIGURING → READY
  * 
  * Features:
- * - Scans for device named "IOS-Vlink" or with the main service UUID
+ * - Scans for device named "IOS-Vlink" or "IOS-Vlink-DEV" or with the main service UUID
  * - Connects, discovers GATT, enables notifications, selects a writer
  * - Runs init AT queue (ATZ, ATD, ATE0, ATS0, ATH0, ATL0) once
  * - Exposes requestSoc() for one-shot SOC requests (no auto-polling)
@@ -62,7 +62,8 @@ class BleObdManager(
     private val SERVICE_MAIN = UUID.fromString("e7810a71-73ae-499d-8c15-faa9aef0c3f2")
     private val CCCD_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
-    private val TARGET_NAME = "IOS-Vlink"
+    private val TARGET_NAME = "IOS-Vlink"  // Will also match "IOS-Vlink-DEV" via substring match
+    private var isDevMode = false
 
     private var gatt: BluetoothGatt? = null
     private var writer: BluetoothGattCharacteristic? = null
@@ -110,7 +111,7 @@ class BleObdManager(
         reconnectAttempts = 0
         currentState = State.SCANNING
         listener.onStatus("SCANNING")
-        listener.onLog("Start scan for $TARGET_NAME or service $SERVICE_MAIN")
+        listener.onLog("Start scan for $TARGET_NAME (or DEV variant) or service $SERVICE_MAIN")
         startScan()
         // startDiagnosticUnfilteredScan()
     }
@@ -177,6 +178,7 @@ class BleObdManager(
         inboundBuffer.clear()
         waitingForResponse = false
         pendingNotificationDescriptor = null
+        isDevMode = false
     }
 
     private fun closeGatt() {
@@ -240,7 +242,14 @@ class BleObdManager(
             val uuids = record?.serviceUuids?.joinToString(",") { it.uuid.toString() } ?: ""
             listener.onLog("Scan result: name=$name address=$address uuids=$uuids")
 
+            // Check if this is a dev mode device
+            if (name.contains("DEV", ignoreCase = true)) {
+                isDevMode = true
+            }
+
+            // Match by exact name, service UUID, or if name starts with TARGET_NAME (handles -DEV variant)
             val targetMatch = name.equals(TARGET_NAME, ignoreCase = true) ||
+                    name.startsWith(TARGET_NAME, ignoreCase = true) ||
                     (record?.serviceUuids?.any { it.uuid == SERVICE_MAIN } == true)
             if (targetMatch) {
                 stopScanSafe()
@@ -419,8 +428,9 @@ class BleObdManager(
             // Init complete - transition to READY
             initComplete = true
             currentState = State.READY
-            listener.onStatus("READY")
-            listener.onLog("Init complete - READY for commands")
+            val statusMsg = if (isDevMode) "READY (DEV)" else "READY"
+            listener.onStatus(statusMsg)
+            listener.onLog("Init complete - $statusMsg for commands")
             listener.onReady()
             reconnectAttempts = 0  // Reset on successful connection
             return
