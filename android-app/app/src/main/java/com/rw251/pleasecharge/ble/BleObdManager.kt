@@ -20,7 +20,7 @@ import java.util.*
 /**
  * BLE + OBD manager implementing a state machine for connection management.
  * 
- * States: IDLE → SCANNING → CONNECTING → DISCOVERING → CONFIGURING → READY
+ * States: DISCONNECTED → SCANNING → CONNECTING → DISCOVERING → CONFIGURING → READY
  * 
  * Features:
  * - Scans for device named "IOS-Vlink" or "IOS-Vlink-DEV" or with the main service UUID
@@ -35,7 +35,7 @@ class BleObdManager(
     private val scope: CoroutineScope
 ) {
     enum class State {
-        IDLE,           // Not connected, not attempting
+        DISCONNECTED,           // Not connected, not attempting
         SCANNING,       // Scanning for device
         CONNECTING,     // Connecting to device
         DISCOVERING,    // Discovering GATT services
@@ -74,12 +74,13 @@ class BleObdManager(
     private val inboundBuffer = StringBuilder()
     private var waitingForResponse = false
     private var pendingNotificationDescriptor: BluetoothGattDescriptor? = null
+    private var displayStatus = "DISCONNECTED"  // Only update on major state changes
 
     private var reconnectJob: Job? = null
     private var reconnectAttempts = 0
     private val maxReconnectAttempts = 1  // Single retry per plan
 
-    private var currentState: State = State.IDLE
+    private var currentState: State = State.DISCONNECTED
         set(value) {
             if (field != value) {
                 field = value
@@ -110,7 +111,7 @@ class BleObdManager(
         stop() // clean slate
         reconnectAttempts = 0
         currentState = State.SCANNING
-        listener.onStatus("SCANNING")
+        updateDisplayStatus("SCANNING")
         listener.onLog("Start scan for $TARGET_NAME (or DEV variant) or service $SERVICE_MAIN")
         startScan()
         // startDiagnosticUnfilteredScan()
@@ -123,8 +124,8 @@ class BleObdManager(
         reconnectJob = null
         closeGatt()
         resetInternalState()
-        currentState = State.IDLE
-        listener.onStatus("IDLE")
+        currentState = State.DISCONNECTED
+        updateDisplayStatus("DISCONNECTED")
         listener.onLog("Stopped")
     }
 
@@ -138,8 +139,8 @@ class BleObdManager(
         reconnectJob = null
         closeGatt()
         resetInternalState()
-        currentState = State.IDLE
-        listener.onStatus("CANCELLED")
+        currentState = State.DISCONNECTED
+        updateDisplayStatus("DISCONNECTED")
         listener.onLog("Cancelled")
     }
 
@@ -154,7 +155,7 @@ class BleObdManager(
             return
         }
         listener.onLog("Requesting SOC (22B046)")
-        send("22B046")
+        send("22B046", isLastInitCommand = false)
     }
 
     /**
@@ -268,7 +269,7 @@ class BleObdManager(
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     private fun connect(device: BluetoothDevice) {
         currentState = State.CONNECTING
-        listener.onStatus("CONNECTING")
+        updateDisplayStatus("CONNECTING")
         listener.onLog("Connecting to ${device.address}")
         try {
             gatt = device.connectGatt(context, false, gattCallback)
@@ -292,7 +293,6 @@ class BleObdManager(
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     currentState = State.DISCOVERING
-                    listener.onStatus("DISCOVERING SERVICES")
                     listener.onLog("Connected, discovering services...")
                     try {
                         gatt.discoverServices()
@@ -302,7 +302,7 @@ class BleObdManager(
                     }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
-                    listener.onStatus("DISCONNECTED")
+                    updateDisplayStatus("DISCONNECTED")
                     listener.onLog("Disconnected")
                     closeGatt()
                     scheduleReconnect()
@@ -383,7 +383,7 @@ class BleObdManager(
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     private fun enableNotifications(gatt: BluetoothGatt, ch: BluetoothGattCharacteristic) {
         currentState = State.CONFIGURING
-        listener.onStatus("ENABLING NOTIFICATIONS")
+        listener.onLog("Enabling notifications...")
         
         val ok = gatt.setCharacteristicNotification(ch, true)
         if (!ok) {
@@ -418,7 +418,6 @@ class BleObdManager(
     }
 
     private fun runInitQueue() {
-        listener.onStatus("CONFIGURING")
         listener.onLog("Running AT init queue...")
         processNextInitCommand()
     }
@@ -429,7 +428,7 @@ class BleObdManager(
             initComplete = true
             currentState = State.READY
             val statusMsg = if (isDevMode) "READY (DEV)" else "READY"
-            listener.onStatus(statusMsg)
+            updateDisplayStatus(statusMsg)
             listener.onLog("Init complete - $statusMsg for commands")
             listener.onReady()
             reconnectAttempts = 0  // Reset on successful connection
@@ -437,10 +436,14 @@ class BleObdManager(
         }
         
         val cmd = atInitQueue.removeFirst()
-        send(cmd)
+        
+        // If this is the last command, remember to set READY status after response
+        val isLastCommand = atInitQueue.isEmpty()
+        
+        send(cmd, isLastCommand)
     }
 
-    private fun send(command: String) {
+    private fun send(command: String, isLastInitCommand: Boolean = false) {
         val w = writer ?: run {
             listener.onError("No writer characteristic")
             return
@@ -459,7 +462,6 @@ class BleObdManager(
                 listener.onLog("writeCharacteristic returned false for: $command")
             } else {
                 waitingForResponse = true
-                listener.onStatus("Sending: $command")
                 listener.onLog("TX: $command")
             }
         } catch (e: SecurityException) {
@@ -572,9 +574,9 @@ class BleObdManager(
     @SuppressLint("MissingPermission")
     private fun scheduleReconnect() {
         if (reconnectAttempts >= maxReconnectAttempts) {
-            listener.onStatus("DISCONNECTED")
+            updateDisplayStatus("DISCONNECTED")
             listener.onLog("Max reconnect attempts reached")
-            currentState = State.IDLE
+            currentState = State.DISCONNECTED
             return
         }
         
@@ -582,19 +584,25 @@ class BleObdManager(
         reconnectJob = scope.launch(Dispatchers.IO) {
             val backoffMs = 300L * (reconnectAttempts + 1)
             reconnectAttempts++
-            listener.onStatus("RECONNECTING in ${backoffMs/1000}s (attempt $reconnectAttempts)")
             listener.onLog("Scheduling reconnect in ${backoffMs}ms (attempt $reconnectAttempts)")
             delay(backoffMs)
             
             if (hasAllPermissions()) {
                 resetInternalState()
                 currentState = State.SCANNING
-                listener.onStatus("SCANNING")
+                updateDisplayStatus("SCANNING")
                 startScan()
             } else {
                 listener.onError("Missing permissions for reconnect")
-                currentState = State.IDLE
+                currentState = State.DISCONNECTED
             }
+        }
+    }
+
+    private fun updateDisplayStatus(status: String) {
+        if (displayStatus != status) {
+            displayStatus = status
+            listener.onStatus(status)
         }
     }
 }

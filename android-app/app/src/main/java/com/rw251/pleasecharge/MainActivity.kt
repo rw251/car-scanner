@@ -41,7 +41,6 @@ class MainActivity : AppCompatActivity() {
             viewModel.appendLog("Permissions granted")
             startBleManager()
         } else {
-            viewModel.setStatus("Permission denied")
             viewModel.appendLog("Permissions denied - cannot scan for BLE devices")
         }
     }
@@ -94,7 +93,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnSoc.setOnClickListener {
-            viewModel.setStatus("Requesting SOC...")
             manager?.requestSoc()
         }
     }
@@ -105,7 +103,7 @@ class MainActivity : AppCompatActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
                     viewModel.status.collect { status ->
-                        binding.tvStatus.text = "Status: $status"
+                        binding.tvStatus.text = "$status"
                     }
                 }
                 launch {
@@ -140,7 +138,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateButtonStates(state: BleObdManager.State) {
         when (state) {
-            BleObdManager.State.IDLE -> {
+            BleObdManager.State.DISCONNECTED -> {
                 binding.btnConnect.isEnabled = true
                 binding.btnCancel.isEnabled = false
                 binding.btnSoc.isEnabled = false
@@ -201,7 +199,6 @@ class MainActivity : AppCompatActivity() {
 
             override fun onReady() {
                 runOnUiThread {
-                    viewModel.setStatus("READY")
                     viewModel.setReady(true)
                 }
             }
@@ -213,7 +210,6 @@ class MainActivity : AppCompatActivity() {
                         display = "SOC: ${String.format(Locale.getDefault(), "%.1f", pct)}% (raw: $raw)",
                         time = "Time: ${nowString()}"
                     )
-                    viewModel.setStatus("READY")
                 }
             }
 
@@ -226,7 +222,6 @@ class MainActivity : AppCompatActivity() {
 
             override fun onError(msg: String, ex: Throwable?) {
                 runOnUiThread {
-                    viewModel.setStatus("Error: $msg")
                     viewModel.appendLog("ERROR: $msg${if (ex != null) " - ${ex.message}" else ""}")
                 }
             }

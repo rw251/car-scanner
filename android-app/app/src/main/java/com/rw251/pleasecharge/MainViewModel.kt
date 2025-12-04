@@ -16,7 +16,7 @@ class MainViewModel : ViewModel() {
         private const val MAX_LOG_LINES = 200
     }
 
-    private val _status = MutableStateFlow("IDLE")
+    private val _status = MutableStateFlow("DISCONNECTED")
     val status: StateFlow<String> = _status.asStateFlow()
 
     private val _logs = MutableStateFlow<List<String>>(emptyList())
@@ -31,7 +31,7 @@ class MainViewModel : ViewModel() {
     private val _isReady = MutableStateFlow(false)
     val isReady: StateFlow<Boolean> = _isReady.asStateFlow()
 
-    private val _state = MutableStateFlow(BleObdManager.State.IDLE)
+    private val _state = MutableStateFlow(BleObdManager.State.DISCONNECTED)
     val state: StateFlow<BleObdManager.State> = _state.asStateFlow()
 
     fun setStatus(text: String) {
