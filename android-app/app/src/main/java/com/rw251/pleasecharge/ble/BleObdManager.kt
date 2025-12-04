@@ -251,15 +251,15 @@ class BleObdManager(
             val device = result.device ?: return
             val record = result.scanRecord
             val name = record?.deviceName ?: device.name ?: "<unknown>"
-            val addr = device.address
+            val address = device.address
             val uuids = record?.serviceUuids?.joinToString(",") { it.uuid.toString() } ?: ""
-            listener.onLog("Scan result: name=$name addr=$addr uuids=$uuids")
+            listener.onLog("Scan result: name=$name address=$address uuids=$uuids")
 
             val targetMatch = name.equals(TARGET_NAME, ignoreCase = true) ||
                     (record?.serviceUuids?.any { it.uuid == SERVICE_MAIN } == true)
             if (targetMatch) {
                 stopScanSafe()
-                listener.onLog("Found target device: name=$name, address=$addr")
+                listener.onLog("Found target device: name=$name, address=$address")
                 connect(device)
             }
         }
@@ -401,15 +401,16 @@ class BleObdManager(
         
         val cccd = ch.getDescriptor(CCCD_UUID)
         if (cccd != null) {
-            cccd.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            pendingNotificationDescriptor = cccd
+            val cccdValue = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
             try {
-                val wrote = gatt.writeDescriptor(cccd)
-                if (!wrote) {
+                val wrote = gatt.writeDescriptor(cccd, cccdValue)
+                if (wrote < 0) {
                     pendingNotificationDescriptor = null
                     listener.onError("Failed to write CCCD descriptor")
                     listener.onLog("writeDescriptor returned false")
                     scheduleReconnect()
+                } else {
+                    pendingNotificationDescriptor = cccd
                 }
             } catch (e: SecurityException) {
                 pendingNotificationDescriptor = null
@@ -455,12 +456,10 @@ class BleObdManager(
         }
         
         val bytes = (command + "\r").toByteArray(Charset.forName("UTF-8"))
-        w.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-        w.value = bytes
-        
+
         try {
-            val ok = g.writeCharacteristic(w)
-            if (!ok) {
+            val res = g.writeCharacteristic(w, bytes, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+            if (res < 0) {
                 listener.onError("Write failed: $command")
                 listener.onLog("writeCharacteristic returned false for: $command")
             } else {
@@ -516,6 +515,7 @@ class BleObdManager(
         }
     }
 
+    @SuppressLint("DefaultLocale")
     private fun parseOBDResponse(value: String) {
         val cleaned = value.trim()
         if (cleaned.isEmpty()) return
