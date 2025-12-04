@@ -330,7 +330,7 @@ Advertisement.configureMembers({
   },
 });
 Advertisement.prototype.Type = "peripheral";
-Advertisement.prototype.LocalName = "IOS-Vlink";
+Advertisement.prototype.LocalName = "IOS-Vlink-DEV";
 Advertisement.prototype.ServiceUUIDs = Object.values(SERVICES);
 Advertisement.prototype.IncludeTxPower = true;
 
@@ -910,7 +910,7 @@ async function main() {
     const ModelChar = createReadOnlyCharClass(
       CHARS.modelNumber,
       `${APP_PATH}/service_devinfo`,
-      "IOS-Vlink"
+      "IOS-Vlink-DEV"
     );
     const modelCharObj = new ModelChar();
     bus.export(`${APP_PATH}/service_devinfo/char_model`, modelCharObj);
