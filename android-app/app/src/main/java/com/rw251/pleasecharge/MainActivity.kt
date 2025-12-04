@@ -103,7 +103,7 @@ class MainActivity : AppCompatActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
                     viewModel.status.collect { status ->
-                        binding.tvStatus.text = "$status"
+                        binding.tvStatus.text = status
                     }
                 }
                 launch {

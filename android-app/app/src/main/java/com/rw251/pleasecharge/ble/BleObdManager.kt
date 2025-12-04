@@ -155,7 +155,7 @@ class BleObdManager(
             return
         }
         listener.onLog("Requesting SOC (22B046)")
-        send("22B046", isLastInitCommand = false)
+        send("22B046")
     }
 
     /**
@@ -436,14 +436,10 @@ class BleObdManager(
         }
         
         val cmd = atInitQueue.removeFirst()
-        
-        // If this is the last command, remember to set READY status after response
-        val isLastCommand = atInitQueue.isEmpty()
-        
-        send(cmd, isLastCommand)
+        send(cmd)
     }
 
-    private fun send(command: String, isLastInitCommand: Boolean = false) {
+    private fun send(command: String) {
         val w = writer ?: run {
             listener.onError("No writer characteristic")
             return
