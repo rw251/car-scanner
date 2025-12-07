@@ -75,10 +75,10 @@ class BleObdManager(
     private var waitingForResponse = false
     private var pendingNotificationDescriptor: BluetoothGattDescriptor? = null
     private var displayStatus = "DISCONNECTED"  // Only update on major state changes
-
     private var reconnectJob: Job? = null
     private var reconnectAttempts = 0
     private val maxReconnectAttempts = 1  // Single retry per plan
+    private var pollingJob: Job? = null
 
     private var currentState: State = State.DISCONNECTED
         set(value) {
@@ -122,6 +122,7 @@ class BleObdManager(
         stopScanSafe()
         reconnectJob?.cancel()
         reconnectJob = null
+        stopSocPolling()
         closeGatt()
         resetInternalState()
         currentState = State.DISCONNECTED
@@ -137,6 +138,7 @@ class BleObdManager(
         stopScanSafe()
         reconnectJob?.cancel()
         reconnectJob = null
+        stopSocPolling()
         closeGatt()
         resetInternalState()
         currentState = State.DISCONNECTED
@@ -152,6 +154,11 @@ class BleObdManager(
         if (currentState != State.READY) {
             listener.onError("Not ready - cannot request SOC")
             listener.onLog("requestSoc() called but state is $currentState")
+            return
+        }
+        // Skip if already waiting for a response (prevent overlapping requests)
+        if (waitingForResponse) {
+            listener.onLog("Skipping SOC request - already waiting for response")
             return
         }
         listener.onLog("Requesting SOC (22B046)")
@@ -302,6 +309,7 @@ class BleObdManager(
                     }
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
+                    stopSocPolling()
                     updateDisplayStatus("DISCONNECTED")
                     listener.onLog("Disconnected")
                     closeGatt()
@@ -432,6 +440,7 @@ class BleObdManager(
             listener.onLog("Init complete - $statusMsg for commands")
             listener.onReady()
             reconnectAttempts = 0  // Reset on successful connection
+            startSocPolling()  // Start polling for SOC updates
             return
         }
         
@@ -570,6 +579,7 @@ class BleObdManager(
     @SuppressLint("MissingPermission")
     private fun scheduleReconnect() {
         if (reconnectAttempts >= maxReconnectAttempts) {
+            stopSocPolling()
             updateDisplayStatus("DISCONNECTED")
             listener.onLog("Max reconnect attempts reached")
             currentState = State.DISCONNECTED
@@ -600,5 +610,26 @@ class BleObdManager(
             displayStatus = status
             listener.onStatus(status)
         }
+    }
+
+    private fun startSocPolling() {
+        pollingJob?.cancel()
+        pollingJob = scope.launch(Dispatchers.Main) {
+            while (currentState == State.READY) {
+                delay(10000)  // 10 seconds
+                if (currentState == State.READY && !waitingForResponse) {
+                    try {
+                        requestSoc()
+                    } catch (e: Exception) {
+                        listener.onLog("Error in SOC polling: ${e.message}")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun stopSocPolling() {
+        pollingJob?.cancel()
+        pollingJob = null
     }
 }

@@ -2,7 +2,9 @@ package com.rw251.pleasecharge
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.os.Bundle
+import android.os.Build
 import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -12,6 +14,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.rw251.pleasecharge.ble.BleObdManager
+import com.rw251.pleasecharge.BleConnectionManager
 import com.rw251.pleasecharge.databinding.ActivityMainBinding
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -68,20 +71,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
-    override fun onStop() {
-        super.onStop()
-        // Stop scan/close GATT when app goes to background
-        manager?.stop()
-    }
-
-    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
-    override fun onDestroy() {
-        super.onDestroy()
-        manager?.stop()
-        manager = null
-    }
-
     @SuppressLint("MissingPermission")
     private fun setupUI() {
         binding.btnConnect.setOnClickListener {
@@ -90,6 +79,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnCancel.setOnClickListener @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT) {
             manager?.cancel()
+            stopBleForegroundService()
         }
 
         binding.btnSoc.setOnClickListener {
@@ -182,12 +172,12 @@ class MainActivity : AppCompatActivity() {
     @RequiresPermission(allOf = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT])
     private fun startBleManager() {
         if (manager == null) {
-            manager = BleObdManager(
+            manager = BleConnectionManager.getOrCreateManager(
                 context = this,
-                listener = createBleListener(),
-                scope = lifecycleScope
+                listener = createBleListener()
             )
         }
+        startBleForegroundService()
         manager?.start()
     }
 
@@ -243,4 +233,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun nowString(): String = 
         SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+
+    private fun startBleForegroundService() {
+        val intent = Intent(this, BleForegroundService::class.java).apply {
+            action = BleForegroundService.ACTION_START
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent)
+        } else {
+            startService(intent)
+        }
+    }
+
+    private fun stopBleForegroundService() {
+        val intent = Intent(this, BleForegroundService::class.java).apply {
+            action = BleForegroundService.ACTION_STOP
+        }
+        stopService(intent)
+    }
 }
