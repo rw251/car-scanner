@@ -135,11 +135,77 @@ build_app() {
     fi
 }
 
+# Function to update version for release
+update_version_for_release() {
+    local gradle_file="$APP_DIR/app/build.gradle.kts"
+    
+    echo ""
+    echo "📋 Current version:"
+    echo "========================================"
+    
+    # Extract current version info
+    local current_code=$(grep -oP 'versionCode = \K\d+' "$gradle_file")
+    local current_name=$(grep -oP 'versionName = "\K[^"]+' "$gradle_file")
+    
+    echo "  Version Code: $current_code"
+    echo "  Version Name: $current_name"
+    echo ""
+    
+    # Ask user for new version
+    read -p "Enter new version name (e.g., 1.1, 2.0) or press Enter to skip: " new_version_name
+    
+    if [[ -z "$new_version_name" ]]; then
+        echo "⏭️  Skipping version update"
+        return 0
+    fi
+    
+    # Increment version code
+    local new_version_code=$((current_code + 1))
+    
+    echo ""
+    echo "🆕 New version:"
+    echo "  Version Code: $new_version_code"
+    echo "  Version Name: $new_version_name"
+    echo ""
+    
+    # Update gradle file
+    sed -i "s/versionCode = $current_code/versionCode = $new_version_code/" "$gradle_file"
+    sed -i "s/versionName = \"$current_name\"/versionName = \"$new_version_name\"/" "$gradle_file"
+    
+    if [ $? -eq 0 ]; then
+        echo "✅ Version updated successfully!"
+        
+        # Optionally create git tag
+        read -p "Create git tag for this version? (y/n): " -n 1 -r create_tag
+        echo ""
+        
+        if [[ $create_tag =~ ^[Yy]$ ]]; then
+            (cd "$ROOT_DIR" && git add "$gradle_file" && git commit -m "Bump version to $new_version_name" && git tag -a "v$new_version_name" -m "Release version $new_version_name")
+            if [ $? -eq 0 ]; then
+                echo "✅ Git tag created: v$new_version_name"
+            else
+                echo "⚠️  Failed to create git tag (make sure git is configured)"
+            fi
+        fi
+        
+        return 0
+    else
+        echo "❌ Failed to update version"
+        return 1
+    fi
+}
+
 # Function to build production release
 build_release() {
     echo ""
     echo "📦 Building Production Release Bundle..."
     echo "========================================"
+    
+    # First, handle version update
+    update_version_for_release
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
     
     local keystore_path="$APP_DIR/release-keystore.jks"
     
