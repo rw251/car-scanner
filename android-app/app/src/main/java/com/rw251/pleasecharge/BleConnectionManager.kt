@@ -42,11 +42,6 @@ object BleConnectionManager {
         activeListener = listener
     }
 
-    fun release() {
-        bleManager = null
-        activeListener = null
-    }
-
     /**
      * Proxy listener that forwards to the currently active listener
      * This allows switching between phone and car UI

@@ -1,3 +1,5 @@
 .venv/
 elm.log
 node_modules/
+
+release-keystore.jks

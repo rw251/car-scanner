@@ -135,6 +135,59 @@ build_app() {
     fi
 }
 
+# Function to build production release
+build_release() {
+    echo ""
+    echo "📦 Building Production Release Bundle..."
+    echo "========================================"
+    
+    local keystore_path="$APP_DIR/release-keystore.jks"
+    
+    echo ""
+    read -rsp "Enter keystore password: " KEYSTORE_PASS
+    echo ""
+    # read -rp "Enter key alias [pleasecharge-release]: " KEY_ALIAS
+    KEY_ALIAS=${KEY_ALIAS:-upload}
+    read -rsp "Enter key password (press Enter if same as keystore): " KEY_PASS
+    echo ""
+    KEY_PASS=${KEY_PASS:-$KEYSTORE_PASS}
+    
+    echo ""
+    echo "🔨 Building release bundle..."
+    
+    # Convert to absolute path
+    local abs_keystore_path=$(cd "$(dirname "$keystore_path")" && pwd)/$(basename "$keystore_path")
+    
+    (cd "$APP_DIR" && ./gradlew bundleRelease \
+        -Pandroid.injected.signing.store.file="$abs_keystore_path" \
+        -Pandroid.injected.signing.store.password="$KEYSTORE_PASS" \
+        -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+        -Pandroid.injected.signing.key.password="$KEY_PASS")
+    
+    if [ $? -eq 0 ]; then
+        echo "✅ Release build successful!"
+        
+        local aab_path="$APP_DIR/app/build/outputs/bundle/release/app-release.aab"
+        if [ -f "$aab_path" ]; then
+            local size=$(du -h "$aab_path" | cut -f1)
+            echo "📦 AAB size: $size"
+            echo "📍 AAB location: $aab_path"
+            echo ""
+            echo "📝 Next steps:"
+            echo "  1. Go to https://play.google.com/console"
+            echo "  2. Select your app (or create a new one)"
+            echo "  3. Go to Release → Production → Create new release"
+            echo "  4. Upload the AAB file: $aab_path"
+            echo ""
+            echo "⚠️  Don't forget to back up: $keystore_path"
+        fi
+        return 0
+    else
+        echo "❌ Release build failed!"
+        return 1
+    fi
+}
+
 # Function to build and deploy
 build_and_deploy() {
     if ! ensure_device_connected; then
@@ -204,14 +257,15 @@ export_logs() {
 show_menu() {
     echo ""
     echo "Choose an option:"
-    echo "1) Build APK"
+    echo "1) Build APK (debug)"
     echo "2) Build and deploy to phone"
-    echo "3) Export logs from phone"
-    echo "4) List connected devices"
-    echo "5) Restart ADB server"
-    echo "6) Exit"
+    echo "3) Build production release (Play Store)"
+    echo "4) Export logs from phone"
+    echo "5) List connected devices"
+    echo "6) Restart ADB server"
+    echo "7) Exit"
     echo ""
-    read -p "Enter choice [1-6]: " choice
+    read -p "Enter choice [1-7]: " choice
 
     case $choice in
         1)
@@ -221,20 +275,23 @@ show_menu() {
             build_and_deploy
             ;;
         3)
-            export_logs
+            build_release
             ;;
         4)
-            list_devices
+            export_logs
             ;;
         5)
-            restart_adb
+            list_devices
             ;;
         6)
+            restart_adb
+            ;;
+        7)
             echo "👋 Goodbye!"
             exit 0
             ;;
         *)
-            echo "❌ Invalid option. Please choose 1-6."
+            echo "❌ Invalid option. Please choose 1-7."
             return 1
             ;;
     esac
