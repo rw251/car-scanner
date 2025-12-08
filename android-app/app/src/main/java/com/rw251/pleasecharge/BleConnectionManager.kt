@@ -7,11 +7,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 
 /**
- * Singleton to manage shared BLE connection between phone app and Android Auto
+ * Singleton to manage shared BLE connection between phone app and Android Auto.
+ * Supports multiple listeners so both UIs stay in sync.
  */
 object BleConnectionManager {
     private var bleManager: BleObdManager? = null
-    private var activeListener: BleObdManager.Listener? = null
+    private val listeners = mutableSetOf<BleObdManager.Listener>()
 
     private val managerScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
@@ -21,10 +22,9 @@ object BleConnectionManager {
         updateListener: Boolean = true,
     ): BleObdManager {
         if (updateListener) {
-            activeListener = listener
-        } else if (activeListener == null) {
-            // Ensure we always have some listener available for the proxy
-            activeListener = listener
+            synchronized(listeners) {
+                listeners.add(listener)
+            }
         }
         
         if (bleManager == null) {
@@ -38,41 +38,63 @@ object BleConnectionManager {
         return bleManager!!
     }
 
+    fun removeListener(listener: BleObdManager.Listener) {
+        synchronized(listeners) {
+            listeners.remove(listener)
+        }
+    }
+
     fun updateListener(listener: BleObdManager.Listener) {
-        activeListener = listener
+        synchronized(listeners) {
+            listeners.add(listener)
+        }
     }
 
     /**
-     * Proxy listener that forwards to the currently active listener
-     * This allows switching between phone and car UI
+     * Proxy listener that forwards to all registered listeners
+     * This keeps both phone and car UI in sync
      */
     private class ProxyListener : BleObdManager.Listener {
         override fun onStatus(text: String) {
-            activeListener?.onStatus(text)
+            synchronized(listeners) {
+                listeners.forEach { it.onStatus(text) }
+            }
         }
 
         override fun onReady() {
-            activeListener?.onReady()
+            synchronized(listeners) {
+                listeners.forEach { it.onReady() }
+            }
         }
 
         override fun onSoc(raw: Int, pct93: Double?, pct95: Double?, pct97: Double?, timestamp: Long) {
-            activeListener?.onSoc(raw, pct93, pct95, pct97, timestamp)
+            synchronized(listeners) {
+                listeners.forEach { it.onSoc(raw, pct93, pct95, pct97, timestamp) }
+            }
         }
 
         override fun onTemp(celsius: Double, timestamp: Long) {
-            activeListener?.onTemp(celsius, timestamp)
+            synchronized(listeners) {
+                listeners.forEach { it.onTemp(celsius, timestamp) }
+            }
         }
 
         override fun onError(msg: String, ex: Throwable?) {
-            activeListener?.onError(msg, ex)
+            synchronized(listeners) {
+                listeners.forEach { it.onError(msg, ex) }
+            }
         }
 
         override fun onLog(line: String) {
-            activeListener?.onLog(line)
+            synchronized(listeners) {
+                listeners.forEach { it.onLog(line) }
+            }
         }
 
         override fun onStateChanged(state: BleObdManager.State) {
-            activeListener?.onStateChanged(state)
+            synchronized(listeners) {
+                listeners.forEach { it.onStateChanged(state) }
+            }
         }
     }
 }

@@ -20,6 +20,7 @@ import java.util.Locale
  */
 class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycleObserver {
     private var bleManager: BleObdManager? = null
+    private var listener: BleObdManager.Listener? = null
     
     private var socPercent: String = "--"
     private var socRaw: String = "--"
@@ -109,13 +110,15 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
 
     private fun connectToBle() {
         if (bleManager == null) {
+            listener = createBleListener()
             bleManager = BleConnectionManager.getOrCreateManager(
                 context = carContext,
-                listener = createBleListener()
+                listener = listener!!
             )
         } else {
             // Manager exists, just update the listener
-            BleConnectionManager.updateListener(createBleListener())
+            listener = createBleListener()
+            BleConnectionManager.updateListener(listener!!)
         }
         
         // Check permissions - in a real app, you'd need to handle this properly
@@ -174,6 +177,7 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
 
     override fun onDestroy(owner: LifecycleOwner) {
         super.onDestroy(owner)
+        listener?.let { BleConnectionManager.removeListener(it) }
         bleManager?.stop()
     }
 }
