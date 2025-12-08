@@ -96,6 +96,8 @@ class BleObdManager(
         return hasPerm(Manifest.permission.BLUETOOTH_SCAN) && hasPerm(Manifest.permission.BLUETOOTH_CONNECT) && hasPerm(Manifest.permission.ACCESS_FINE_LOCATION)
     }
 
+    fun getState(): State = currentState
+
     @RequiresPermission(allOf = [
         Manifest.permission.BLUETOOTH_SCAN,
         Manifest.permission.BLUETOOTH_CONNECT,
@@ -161,8 +163,14 @@ class BleObdManager(
             listener.onLog("Skipping SOC request - already waiting for response")
             return
         }
-        listener.onLog("Requesting SOC (22B046)")
+        listener.onLog("Requesting SOC (22B046) and Temp (22B056)")
         send("22B046")
+        scope.launch(Dispatchers.IO) {
+            delay(500)  // Small delay before requesting temp
+            if (currentState == State.READY) {
+                send("22B056")
+            }
+        }
     }
 
     /**
@@ -615,8 +623,14 @@ class BleObdManager(
     private fun startSocPolling() {
         pollingJob?.cancel()
         pollingJob = scope.launch(Dispatchers.Main) {
+            // Request immediately on first run, then poll every 10 seconds
+            var isFirstRun = true
             while (currentState == State.READY) {
-                delay(10000)  // 10 seconds
+                if (!isFirstRun) {
+                    delay(10000)  // 10 seconds
+                }
+                isFirstRun = false
+                
                 if (currentState == State.READY && !waitingForResponse) {
                     try {
                         requestSoc()

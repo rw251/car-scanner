@@ -1,5 +1,6 @@
 package com.rw251.pleasecharge.car
 
+import android.content.Intent
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
 import androidx.car.app.model.Action
@@ -10,13 +11,14 @@ import androidx.car.app.model.Template
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.rw251.pleasecharge.BleConnectionManager
+import com.rw251.pleasecharge.MainActivity
 import com.rw251.pleasecharge.ble.BleObdManager
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /**
- * Screen that displays State of Charge (SOC) in Android Auto
+ * Screen that displays battery state (SOC + temp) in Android Auto
  */
 class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycleObserver {
     private var bleManager: BleObdManager? = null
@@ -24,46 +26,47 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
     
     private var socPercent: String = "--"
     private var socRaw: String = "--"
-    private var socTime: String = "--:--:--"
+    private var tempCelsius: String = "--"
+    private var lastUpdateTime: String = "--:--:--"
     private var connectionStatus: String = "DISCONNECTED"
     private var lastError: String? = null
+    private var permissionsMissing: Boolean = false
 
     init {
         lifecycle.addObserver(this)
     }
 
     override fun onGetTemplate(): Template {
+        // Initialize BLE manager if needed to check permissions
+        if (bleManager == null) {
+            listener = createBleListener()
+            bleManager = BleConnectionManager.getOrCreateManager(
+                context = carContext,
+                listener = listener!!
+            )
+        }
+        
+        // Check if permissions are missing
+        if (bleManager?.hasAllPermissions() == false && !permissionsMissing) {
+            permissionsMissing = true
+            lastError = "Permissions needed - open phone app to grant access"
+        }
+        
         val paneBuilder = Pane.Builder()
 
-        // Connection status row
+        // Row 1: Status and Battery info combined
         paneBuilder.addRow(
             Row.Builder()
-                .setTitle("Connection Status")
-                .addText(connectionStatus)
+                .setTitle("Status: $connectionStatus")
+                .addText("Battery: $socPercent% ($socRaw)")
                 .build()
         )
 
-        // SOC percentage row
+        // Row 2: Temperature and Last Updated combined
         paneBuilder.addRow(
             Row.Builder()
-                .setTitle("State of Charge")
-                .addText("$socPercent%")
-                .build()
-        )
-
-        // Raw value row
-        paneBuilder.addRow(
-            Row.Builder()
-                .setTitle("Raw Value")
-                .addText(socRaw)
-                .build()
-        )
-
-        // Last update time row
-        paneBuilder.addRow(
-            Row.Builder()
-                .setTitle("Last Updated")
-                .addText(socTime)
+                .setTitle("Temp: $tempCelsius°C")
+                .addText("Updated: $lastUpdateTime")
                 .build()
         )
 
@@ -78,28 +81,41 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
         }
 
         // Add action buttons
-        paneBuilder.addAction(
-            Action.Builder()
-                .setTitle(if (connectionStatus == "DISCONNECTED") "Connect" else "Disconnect")
-                .setOnClickListener {
-                    if (connectionStatus == "DISCONNECTED") {
-                        connectToBle()
-                    } else {
-                        disconnectBle()
-                    }
-                }
-                .build()
-        )
-
-        if (connectionStatus == "READY" || connectionStatus == "READY (DEV)") {
+        if (permissionsMissing) {
+            // Permissions not granted - show action to open phone app
             paneBuilder.addAction(
                 Action.Builder()
-                    .setTitle("Refresh SOC")
+                    .setTitle("Open Phone App to Grant Permissions")
                     .setOnClickListener {
-                        bleManager?.requestSoc()
+                        openPhoneApp()
                     }
                     .build()
             )
+        } else {
+            // Normal connect/disconnect button
+            paneBuilder.addAction(
+                Action.Builder()
+                    .setTitle(if (connectionStatus == "DISCONNECTED") "Connect" else "Disconnect")
+                    .setOnClickListener {
+                        if (connectionStatus == "DISCONNECTED") {
+                            connectToBle()
+                        } else {
+                            disconnectBle()
+                        }
+                    }
+                    .build()
+            )
+
+            if (connectionStatus == "READY" || connectionStatus == "READY (DEV)") {
+                paneBuilder.addAction(
+                    Action.Builder()
+                        .setTitle("Refresh")
+                        .setOnClickListener {
+                            bleManager?.requestSoc()
+                        }
+                        .build()
+                )
+            }
         }
 
         return PaneTemplate.Builder(paneBuilder.build())
@@ -121,14 +137,24 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
             BleConnectionManager.updateListener(listener!!)
         }
         
-        // Check permissions - in a real app, you'd need to handle this properly
-        // For now, we assume permissions are granted from the phone app
-        if (bleManager?.hasAllPermissions() == true) {
-            bleManager?.start()
-        } else {
-            lastError = "Missing BLE permissions - grant in phone app"
+        // Check permissions
+        if (bleManager?.hasAllPermissions() == false) {
+            permissionsMissing = true
+            lastError = "Permissions needed - open phone app to grant access"
             invalidate()
+            return
         }
+        
+        permissionsMissing = false
+        
+        // Only start if not already connected - check current state
+        val currentState = bleManager?.getState()
+        if (currentState != BleObdManager.State.READY) {
+            // Not ready yet, start connection
+            bleManager?.start()
+        }
+        // Try to request data immediately in case already connected
+        bleManager?.requestSoc()
     }
 
     private fun disconnectBle() {
@@ -151,13 +177,18 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
                 val pct = pct95 ?: (raw / 9.5)
                 socPercent = String.format(Locale.getDefault(), "%.1f", pct)
                 socRaw = raw.toString()
-                socTime = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
+                lastUpdateTime = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
                 lastError = null
                 invalidate()
             }
 
             override fun onTemp(celsius: Double, timestamp: Long) {
-                // Not displayed in car UI currently
+                tempCelsius = String.format(Locale.getDefault(), "%.1f", celsius)
+                // Update timestamp if temp is newer than SOC timestamp
+                if (lastUpdateTime == "--:--:--") {
+                    lastUpdateTime = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
+                }
+                invalidate()
             }
 
             override fun onError(msg: String, ex: Throwable?) {
@@ -179,5 +210,13 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
         super.onDestroy(owner)
         listener?.let { BleConnectionManager.removeListener(it) }
         bleManager?.stop()
+    }
+
+    private fun openPhoneApp() {
+        // Launch the MainActivity on the phone to request permissions
+        val intent = Intent(carContext, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        carContext.startActivity(intent)
     }
 }

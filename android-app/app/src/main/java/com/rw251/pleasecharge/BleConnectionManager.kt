@@ -5,17 +5,19 @@ import com.rw251.pleasecharge.ble.BleObdManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import java.lang.ref.WeakReference
 
 /**
  * Singleton to manage shared BLE connection between phone app and Android Auto.
  * Supports multiple listeners so both UIs stay in sync.
  */
 object BleConnectionManager {
-    private var bleManager: BleObdManager? = null
+    // Keep a weak reference so the manager (and any contexts it holds) can be garbage collected.
+    private var bleManagerRef: WeakReference<BleObdManager>? = null
     private val listeners = mutableSetOf<BleObdManager.Listener>()
 
     private val managerScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    
+
     fun getOrCreateManager(
         context: Context,
         listener: BleObdManager.Listener,
@@ -26,16 +28,21 @@ object BleConnectionManager {
                 listeners.add(listener)
             }
         }
-        
-        if (bleManager == null) {
-            bleManager = BleObdManager(
-                context = context.applicationContext,
-                listener = ProxyListener(),
-                scope = managerScope
-            )
+
+        // Try to obtain an existing manager
+        val existing = bleManagerRef?.get()
+        if (existing != null) {
+            return existing
         }
-        
-        return bleManager!!
+
+        // Create a new manager using application context (very important)
+        val created = BleObdManager(
+            context = context.applicationContext,
+            listener = ProxyListener(),
+            scope = managerScope
+        )
+        bleManagerRef = WeakReference(created)
+        return created
     }
 
     fun removeListener(listener: BleObdManager.Listener) {
