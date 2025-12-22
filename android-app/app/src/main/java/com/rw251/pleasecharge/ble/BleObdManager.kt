@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.os.ParcelUuid
 import androidx.annotation.RequiresPermission
 import androidx.core.content.ContextCompat
+import com.rw251.pleasecharge.AppLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -105,11 +106,13 @@ class BleObdManager(
     ])
     fun start() {
         if (!hasAllPermissions()) {
+            AppLogger.e("Missing BLE permissions")
             listener.onError("Missing BLE permissions")
             listener.onLog("Cannot start: missing permissions")
             return
         }
         
+        AppLogger.i("Starting BLE scan")
         stop() // clean slate
         reconnectAttempts = 0
         currentState = State.SCANNING
@@ -285,10 +288,12 @@ class BleObdManager(
     private fun connect(device: BluetoothDevice) {
         currentState = State.CONNECTING
         updateDisplayStatus("CONNECTING")
+        AppLogger.i("Connecting to BLE device: ${device.address}")
         listener.onLog("Connecting to ${device.address}")
         try {
             gatt = device.connectGatt(context, false, gattCallback)
         } catch (e: SecurityException) {
+            AppLogger.e("Connect permission error", e)
             listener.onError("Connect permission error", e)
             listener.onLog("SecurityException connecting: ${e.message}")
             scheduleReconnect()
@@ -299,6 +304,7 @@ class BleObdManager(
         @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
+                AppLogger.e("GATT connection error: status=$status, newState=$newState")
                 listener.onError("Connection error: $status")
                 listener.onLog("Connection error: status=$status, newState=$newState")
                 closeGatt()
@@ -308,10 +314,12 @@ class BleObdManager(
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     currentState = State.DISCOVERING
+                    AppLogger.i("BLE connected, discovering services")
                     listener.onLog("Connected, discovering services...")
                     try {
                         gatt.discoverServices()
                     } catch (e: SecurityException) {
+                        AppLogger.e("Discover services permission error", e)
                         listener.onError("Discover services permission error", e)
                         scheduleReconnect()
                     }
@@ -319,6 +327,7 @@ class BleObdManager(
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     stopSocPolling()
                     updateDisplayStatus("DISCONNECTED")
+                    AppLogger.w("BLE disconnected")
                     listener.onLog("Disconnected")
                     closeGatt()
                     scheduleReconnect()
@@ -329,6 +338,7 @@ class BleObdManager(
         @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
+                AppLogger.e("Service discovery failed: $status")
                 listener.onError("Service discovery failed: $status")
                 listener.onLog("Service discovery failed with status: $status")
                 scheduleReconnect()
@@ -358,6 +368,7 @@ class BleObdManager(
                 }?.second
 
             if (writer == null || notifier == null) {
+                AppLogger.e("Writer or notifier characteristic not found: Writer=${writer?.uuid}, Notifier=${notifier?.uuid}")
                 listener.onError("Writer or notifier characteristic not found")
                 listener.onLog("Writer=${writer?.uuid}, Notifier=${notifier?.uuid}")
                 scheduleReconnect()
@@ -445,6 +456,7 @@ class BleObdManager(
             currentState = State.READY
             val statusMsg = if (isDevMode) "READY (DEV)" else "READY"
             updateDisplayStatus(statusMsg)
+            AppLogger.i("BLE initialization complete - $statusMsg")
             listener.onLog("Init complete - $statusMsg for commands")
             listener.onReady()
             reconnectAttempts = 0  // Reset on successful connection

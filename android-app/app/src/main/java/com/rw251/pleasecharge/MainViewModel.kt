@@ -34,6 +34,12 @@ class MainViewModel : ViewModel() {
     private val _state = MutableStateFlow(BleObdManager.State.DISCONNECTED)
     val state: StateFlow<BleObdManager.State> = _state.asStateFlow()
 
+    private val _distanceMiles = MutableStateFlow<Double?>(null)
+    val distanceMiles: StateFlow<Double?> = _distanceMiles.asStateFlow()
+
+    private val _avgSpeedMph = MutableStateFlow<Double?>(null)
+    val avgSpeedMph: StateFlow<Double?> = _avgSpeedMph.asStateFlow()
+
     fun setStatus(text: String) {
         _status.value = text
     }
@@ -60,5 +66,10 @@ class MainViewModel : ViewModel() {
 
     fun setState(state: BleObdManager.State) {
         _state.value = state
+    }
+
+    fun setLocationStats(distanceMiles: Double, avgSpeedMph: Double) {
+        _distanceMiles.value = distanceMiles
+        _avgSpeedMph.value = avgSpeedMph
     }
 }

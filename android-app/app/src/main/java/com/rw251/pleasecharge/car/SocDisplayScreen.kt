@@ -4,23 +4,29 @@ import android.content.Intent
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
 import androidx.car.app.model.Action
-import androidx.car.app.model.Pane
-import androidx.car.app.model.PaneTemplate
-import androidx.car.app.model.Row
+import androidx.car.app.model.ActionStrip
+import androidx.car.app.model.CarIcon
 import androidx.car.app.model.Template
+import androidx.car.app.navigation.model.NavigationTemplate
+import androidx.car.app.navigation.model.MessageInfo
+import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import com.rw251.pleasecharge.BleConnectionManager
+import com.rw251.pleasecharge.LocationTracker
 import com.rw251.pleasecharge.MainActivity
 import com.rw251.pleasecharge.ble.BleObdManager
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /**
- * Screen that displays battery state (SOC + temp) in Android Auto
+ * Navigation screen that displays battery stats with map.
  */
-class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycleObserver {
+class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMapRenderer) : Screen(carContext), DefaultLifecycleObserver {
     private var bleManager: BleObdManager? = null
     private var listener: BleObdManager.Listener? = null
     
@@ -31,9 +37,22 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
     private var connectionStatus: String = "DISCONNECTED"
     private var lastError: String? = null
     private var permissionsMissing: Boolean = false
+    private var distanceMiles: Double? = null
+    private var avgSpeedMph: Double? = null
+    private var locationJob: Job? = null
 
     init {
         lifecycle.addObserver(this)
+        locationJob = lifecycleScope.launch {
+            LocationTracker.metrics.collect { metrics ->
+                metrics?.let {
+                    distanceMiles = it.distanceMiles
+                    avgSpeedMph = it.averageSpeedMph
+                    mapRenderer.updateLocation(it.lat, it.lon)
+                    invalidate()
+                }
+            }
+        }
     }
 
     override fun onGetTemplate(): Template {
@@ -51,49 +70,29 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
             permissionsMissing = true
             lastError = "Permissions needed - open phone app to grant access"
         }
+
+        LocationTracker.start(carContext) { /* Car UI stays quiet; logs handled on phone */ }
         
-        val paneBuilder = Pane.Builder()
+        val builder = NavigationTemplate.Builder()
 
-        // Row 1: Status and Battery info combined
-        paneBuilder.addRow(
-            Row.Builder()
-                .setTitle("Status: $connectionStatus")
-                .addText("Battery: $socPercent% ($socRaw)")
-                .build()
-        )
-
-        // Row 2: Temperature and Last Updated combined
-        paneBuilder.addRow(
-            Row.Builder()
-                .setTitle("Temp: $tempCelsius°C")
-                .addText("Updated: $lastUpdateTime")
-                .build()
-        )
-
-        // Error row (if any)
-        lastError?.let { error ->
-            paneBuilder.addRow(
-                Row.Builder()
-                    .setTitle("Error")
-                    .addText(error)
-                    .build()
-            )
-        }
-
-        // Add action buttons
+        // Simple message info for now
+        val statsText = "Battery: $socPercent% ($socRaw) | Temp: ${tempCelsius}°C | Status: $connectionStatus"
+        val messageInfo = MessageInfo.Builder(statsText).build()
+        builder.setNavigationInfo(messageInfo)
+        
+        // Add action strip for BLE controls
+        val actionStrip = ActionStrip.Builder()
+        
         if (permissionsMissing) {
-            // Permissions not granted - show action to open phone app
-            paneBuilder.addAction(
+            actionStrip.addAction(
                 Action.Builder()
-                    .setTitle("Open Phone App to Grant Permissions")
-                    .setOnClickListener {
-                        openPhoneApp()
-                    }
+                    .setTitle("Open Phone")
+                    .setOnClickListener { openPhoneApp() }
                     .build()
             )
         } else {
-            // Normal connect/disconnect button
-            paneBuilder.addAction(
+            // Connect/Disconnect button
+            actionStrip.addAction(
                 Action.Builder()
                     .setTitle(if (connectionStatus == "DISCONNECTED") "Connect" else "Disconnect")
                     .setOnClickListener {
@@ -105,23 +104,37 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
                     }
                     .build()
             )
-
+            
+            // Refresh button when connected
             if (connectionStatus == "READY" || connectionStatus == "READY (DEV)") {
-                paneBuilder.addAction(
+                actionStrip.addAction(
                     Action.Builder()
                         .setTitle("Refresh")
-                        .setOnClickListener {
-                            bleManager?.requestSoc()
-                        }
+                        .setOnClickListener { bleManager?.requestSoc() }
                         .build()
                 )
             }
         }
-
-        return PaneTemplate.Builder(paneBuilder.build())
-            .setTitle("PleaseCharge")
-            .setHeaderAction(Action.APP_ICON)
+        
+        builder.setActionStrip(actionStrip.build())
+        
+        // Add map action strip with recenter button
+        val mapActionStrip = ActionStrip.Builder()
+            .addAction(
+                Action.Builder()
+                    .setIcon(
+                        CarIcon.Builder(
+                            IconCompat.createWithResource(carContext, com.rw251.pleasecharge.R.drawable.ic_my_location)
+                        ).build()
+                    )
+                    .setOnClickListener { mapRenderer.handleRecenter() }
+                    .build()
+            )
             .build()
+        
+        builder.setMapActionStrip(mapActionStrip)
+
+        return builder.build()
     }
 
     private fun connectToBle() {
@@ -157,6 +170,7 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
         bleManager?.requestSoc()
     }
 
+    @android.annotation.SuppressLint("MissingPermission")
     private fun disconnectBle() {
         bleManager?.stop()
     }
@@ -206,10 +220,20 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
         }
     }
 
+    @android.annotation.SuppressLint("MissingPermission")
     override fun onDestroy(owner: LifecycleOwner) {
         super.onDestroy(owner)
         listener?.let { BleConnectionManager.removeListener(it) }
         bleManager?.stop()
+        locationJob?.cancel()
+    }
+
+    private fun formatMiles(value: Double?): String {
+        return value?.let { String.format(Locale.getDefault(), "%.2f mi", it) } ?: "--"
+    }
+
+    private fun formatSpeed(value: Double?): String {
+        return value?.let { String.format(Locale.getDefault(), "%.1f mph", it) } ?: "--"
     }
 
     private fun openPhoneApp() {

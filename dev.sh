@@ -135,6 +135,62 @@ build_app() {
     fi
 }
 
+# Function for fast incremental build and deploy
+fast_deploy() {
+    if ! ensure_device_connected; then
+        echo "❌ Cannot deploy without device connection"
+        return 1
+    fi
+    
+    echo ""
+    echo "⚡ Fast Deploy (incremental build)..."
+    echo "========================================"
+    
+    # Incremental build - only rebuilds changed files
+    echo "🔨 Incremental build..."
+    (cd "$APP_DIR" && ./gradlew assembleDebug --parallel --build-cache --configuration-cache)
+    
+    if [ $? -ne 0 ]; then
+        echo "❌ Build failed!"
+        return 1
+    fi
+    
+    local apk_path="$APP_DIR/app/build/outputs/apk/debug/app-debug.apk"
+    if [ ! -f "$apk_path" ]; then
+        echo "❌ APK not found at $apk_path"
+        return 1
+    fi
+    
+    echo "✅ Build complete!"
+    echo "📦 APK size: $(du -h "$apk_path" | cut -f1)"
+    echo ""
+    echo "📱 Installing to device..."
+    
+    # Install with -r (replace) and -t (allow test packages)
+    $ADB install -r -t "$apk_path"
+    
+    if [ $? -eq 0 ]; then
+        echo "✅ Installation successful!"
+        
+        # Force stop and restart the app
+        echo "🔄 Restarting app..."
+        $ADB shell am force-stop com.rw251.pleasecharge
+        sleep 1
+        $ADB shell am start -n com.rw251.pleasecharge/.MainActivity
+        
+        echo ""
+        echo "✅ Fast deploy complete!"
+        echo "⏱️  Total time: ~15 seconds (vs ~2 minutes for full rebuild)"
+        echo ""
+        echo "💡 Tip: Your phone can stay connected to DHU via USB"
+        echo "   while deploying wirelessly. See FAST_DEV_WORKFLOW.md"
+        return 0
+    else
+        echo "❌ Installation failed!"
+        return 1
+    fi
+}
+
 # Function to update version for release
 update_version_for_release() {
     local gradle_file="$APP_DIR/app/build.gradle.kts"
@@ -297,26 +353,63 @@ export_logs() {
     fi
     
     echo ""
-    echo "📋 Exporting logs from device..."
+    echo "📋 Exporting logs and data from device..."
     echo "========================================"
     
-    # Export logs from device storage
-    local log_path="/data/data/com.rw251.pleasecharge/files/widget_log.txt"
-    local local_file="$ROOT_DIR/widget_logs.txt"
-    $ADB shell "run-as com.rw251.pleasecharge cat $log_path" > "$local_file"
+    # Paths inside app's internal storage
+    local app_pkg="com.rw251.pleasecharge"
+    local device_log_path="/data/data/$app_pkg/files/app_log.txt"
+    local device_csv_path="/data/data/$app_pkg/files/vehicle_data.csv"
+    local device_log_old="/data/data/$app_pkg/files/app_log.txt.old"
+    local device_csv_old="/data/data/$app_pkg/files/vehicle_data.csv.old"
 
-    if [ -f "$local_file" ]; then
-        echo "✅ Logs exported to: $local_file"
-        echo "📊 Log file size: $(du -h "$local_file" | cut -f1)"
-        echo ""
-        echo "📄 Last 10 lines:"
-        echo "----------------------------------------"
-        tail -10 "$local_file"
-        return 0
+    # Local output paths
+    local out_dir="$ROOT_DIR/export"
+    mkdir -p "$out_dir"
+    local local_log="$out_dir/app_log.txt"
+    local local_csv="$out_dir/vehicle_data.csv"
+    local local_log_old="$out_dir/app_log.txt.old"
+    local local_csv_old="$out_dir/vehicle_data.csv.old"
+
+    echo "📂 Pulling files to $out_dir"
+    $ADB shell "run-as $app_pkg cat $device_log_path" > "$local_log" 2>/dev/null || true
+    $ADB shell "run-as $app_pkg cat $device_csv_path" > "$local_csv" 2>/dev/null || true
+    $ADB shell "run-as $app_pkg cat $device_log_old" > "$local_log_old" 2>/dev/null || true
+    $ADB shell "run-as $app_pkg cat $device_csv_old" > "$local_csv_old" 2>/dev/null || true
+
+    echo ""
+    if [ -s "$local_log" ]; then
+        echo "✅ App log exported: $local_log (size: $(du -h "$local_log" | cut -f1))"
     else
-        echo "❌ Failed to export logs"
-        return 1
+        echo "⚠️  No app log found or empty"
+        rm -f "$local_log"
     fi
+    if [ -s "$local_csv" ]; then
+        echo "✅ CSV data exported: $local_csv (size: $(du -h "$local_csv" | cut -f1))"
+    else
+        echo "⚠️  No CSV data found or empty"
+        rm -f "$local_csv"
+    fi
+    if [ -s "$local_log_old" ]; then
+        echo "ℹ️  Old app log: $local_log_old (size: $(du -h "$local_log_old" | cut -f1))"
+    else
+        rm -f "$local_log_old"
+    fi
+    if [ -s "$local_csv_old" ]; then
+        echo "ℹ️  Old CSV data: $local_csv_old (size: $(du -h "$local_csv_old" | cut -f1))"
+    else
+        rm -f "$local_csv_old"
+    fi
+
+    echo ""
+    echo "📄 Log tail (last 20 lines):"
+    echo "----------------------------------------"
+    if [ -f "$local_log" ]; then
+        tail -20 "$local_log"
+    else
+        echo "(no log file)"
+    fi
+    return 0
 }
 
 # Function to show menu and get user choice
@@ -326,12 +419,13 @@ show_menu() {
     echo "1) Build APK (debug)"
     echo "2) Build and deploy to phone"
     echo "3) Build production release (Play Store)"
-    echo "4) Export logs from phone"
-    echo "5) List connected devices"
-    echo "6) Restart ADB server"
-    echo "7) Exit"
+    echo "4) Export logs & data from phone"
+    echo "5) Fast deploy (incremental build + restart)"
+    echo "6) List connected devices"
+    echo "7) Restart ADB server"
+    echo "8) Exit"
     echo ""
-    read -p "Enter choice [1-7]: " choice
+    read -p "Enter choice [1-8]: " choice
 
     case $choice in
         1)
@@ -347,17 +441,20 @@ show_menu() {
             export_logs
             ;;
         5)
-            list_devices
+            fast_deploy
             ;;
         6)
-            restart_adb
+            list_devices
             ;;
         7)
+            restart_adb
+            ;;
+        8)
             echo "👋 Goodbye!"
             exit 0
             ;;
         *)
-            echo "❌ Invalid option. Please choose 1-7."
+            echo "❌ Invalid option. Please choose 1-8."
             return 1
             ;;
     esac

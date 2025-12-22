@@ -14,6 +14,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.rw251.pleasecharge.ble.BleObdManager
 import com.rw251.pleasecharge.databinding.ActivityMainBinding
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -32,6 +33,8 @@ class MainActivity : AppCompatActivity() {
     private val viewModel: MainViewModel by viewModels()
 
     private var manager: BleObdManager? = null
+    private var locationJob: Job? = null
+    private var locationStarted = false
 
     @SuppressLint("MissingPermission")
     private val permissionLauncher = registerForActivityResult(
@@ -39,15 +42,23 @@ class MainActivity : AppCompatActivity() {
     ) { results ->
         val allGranted = results.values.all { it }
         if (allGranted) {
+            AppLogger.i("All permissions granted")
             viewModel.appendLog("Permissions granted")
+            startLocationTracking()
             startBleManager()
         } else {
+            AppLogger.w("Permissions denied: $results")
             viewModel.appendLog("Permissions denied - cannot scan for BLE devices")
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Initialize logging and data capture
+        AppLogger.init(this)
+        DataCapture.init(this)
+        AppLogger.i("MainActivity created")
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -60,6 +71,7 @@ class MainActivity : AppCompatActivity() {
 
         setupUI()
         observeViewModel()
+        maybeStartLocationTracking()
 
         // Apply window insets so UI content stays clear of status bar / notches
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.root) { v, insets ->
@@ -82,6 +94,14 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnSoc.setOnClickListener {
             manager?.requestSoc()
+        }
+
+        binding.btnViewLogs.setOnClickListener {
+            startActivity(Intent(this, LogViewerActivity::class.java))
+        }
+
+        binding.btnExportData.setOnClickListener {
+            exportDataFiles()
         }
     }
 
@@ -120,6 +140,20 @@ class MainActivity : AppCompatActivity() {
                         updateButtonStates(state)
                     }
                 }
+                launch {
+                    viewModel.distanceMiles.collect { miles ->
+                        binding.tvDistance.text = miles?.let {
+                            "Distance (10s): ${String.format(Locale.getDefault(), "%.2f", it)} mi"
+                        } ?: "Distance (10s): --"
+                    }
+                }
+                launch {
+                    viewModel.avgSpeedMph.collect { mph ->
+                        binding.tvSpeed.text = mph?.let {
+                            "Avg speed (10s): ${String.format(Locale.getDefault(), "%.1f", it)} mph"
+                        } ?: "Avg speed (10s): --"
+                    }
+                }
             }
         }
     }
@@ -147,12 +181,48 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun maybeStartLocationTracking() {
+        val hasFine = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val hasCoarse = checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (hasFine || hasCoarse) {
+            startLocationTracking()
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startLocationTracking() {
+        if (locationStarted) return
+        locationStarted = true
+        AppLogger.i("Starting location tracking")
+        LocationTracker.start(applicationContext) { msg -> 
+            AppLogger.d(msg, "LocationTracker")
+            viewModel.appendLog(msg)
+        }
+        if (locationJob == null) {
+            locationJob = lifecycleScope.launch {
+                LocationTracker.metrics.collect { metrics ->
+                    metrics?.let { 
+                        viewModel.setLocationStats(it.distanceMiles, it.averageSpeedMph)
+                        DataCapture.logLocation(
+                            lat = it.lat,
+                            lon = it.lon,
+                            speedMph = it.averageSpeedMph,
+                            distanceMiles = it.distanceMiles,
+                            timestamp = it.timestampMs
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     private fun ensurePermissionsAndStart() {
         val needed = mutableListOf<String>()
         needed += Manifest.permission.BLUETOOTH_SCAN
         needed += Manifest.permission.BLUETOOTH_CONNECT
         // Some devices still require location for BLE scan
         needed += Manifest.permission.ACCESS_FINE_LOCATION
+        needed += Manifest.permission.ACCESS_COARSE_LOCATION
 
         // Check if we already have all permissions
         val hasAll = needed.all { 
@@ -160,8 +230,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (hasAll) {
+            AppLogger.i("All permissions already granted")
+            startLocationTracking()
             startBleManager()
         } else {
+            AppLogger.i("Requesting permissions: $needed")
             viewModel.appendLog("Requesting permissions...")
             permissionLauncher.launch(needed.toTypedArray())
         }
@@ -194,6 +267,8 @@ class MainActivity : AppCompatActivity() {
             override fun onSoc(raw: Int, pct93: Double?, pct95: Double?, pct97: Double?, timestamp: Long) {
                 runOnUiThread {
                     val pct = pct95 ?: (raw / 9.5)
+                    AppLogger.i("SOC received: raw=$raw, pct=$pct")
+                    DataCapture.logSoc(raw, pct, timestamp)
                     viewModel.setSoc(
                         display = "SOC: ${String.format(Locale.getDefault(), "%.1f", pct)}% (raw: $raw)",
                         time = "Time: ${nowString()}"
@@ -204,18 +279,24 @@ class MainActivity : AppCompatActivity() {
             override fun onTemp(celsius: Double, timestamp: Long) {
                 // Temperature not shown in simplified UI per plan
                 runOnUiThread {
+                    AppLogger.i("Temperature received: $celsius°C")
+                    DataCapture.logTemp(celsius, timestamp)
                     viewModel.appendLog("Temp: ${String.format(Locale.getDefault(), "%.1f", celsius)} °C")
                 }
             }
 
             override fun onError(msg: String, ex: Throwable?) {
                 runOnUiThread {
+                    AppLogger.e("BLE Error: $msg", ex)
                     viewModel.appendLog("ERROR: $msg${if (ex != null) " - ${ex.message}" else ""}")
                 }
             }
 
             override fun onLog(line: String) {
-                runOnUiThread { viewModel.appendLog(line) }
+                runOnUiThread { 
+                    AppLogger.d(line, "BleObdManager")
+                    viewModel.appendLog(line) 
+                }
             }
 
             override fun onStateChanged(state: BleObdManager.State) {
@@ -227,6 +308,13 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        AppLogger.i("MainActivity destroyed")
+        locationJob?.cancel()
+        LocationTracker.stop()
+        super.onDestroy()
     }
 
     private fun nowString(): String = 
@@ -244,5 +332,59 @@ class MainActivity : AppCompatActivity() {
             action = BleForegroundService.ACTION_STOP
         }
         stopService(intent)
+    }
+
+    private fun exportDataFiles() {
+        try {
+            val logPath = AppLogger.getLogFilePath()
+            val csvPath = DataCapture.getCsvFilePath()
+            val files = mutableListOf<android.net.Uri>()
+
+            if (logPath != null) {
+                val logFile = java.io.File(logPath)
+                if (logFile.exists() && logFile.length() > 0) {
+                    files.add(
+                        androidx.core.content.FileProvider.getUriForFile(
+                            this,
+                            "${applicationContext.packageName}.fileprovider",
+                            logFile
+                        )
+                    )
+                }
+            }
+
+            if (csvPath != null) {
+                val csvFile = java.io.File(csvPath)
+                if (csvFile.exists() && csvFile.length() > 0) {
+                    files.add(
+                        androidx.core.content.FileProvider.getUriForFile(
+                            this,
+                            "${applicationContext.packageName}.fileprovider",
+                            csvFile
+                        )
+                    )
+                }
+            }
+
+            if (files.isEmpty()) {
+                viewModel.appendLog("No data files to export")
+                return
+            }
+
+            val shareIntent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                type = "*/*"
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(files))
+                putExtra(Intent.EXTRA_SUBJECT, "PleaseCharge Data Export")
+                putExtra(Intent.EXTRA_TEXT, "Exported logs and vehicle data from PleaseCharge app.")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            startActivity(Intent.createChooser(shareIntent, "Export data via"))
+            AppLogger.i("Data files exported: ${files.size} files")
+            viewModel.appendLog("Exported ${files.size} file(s)")
+        } catch (e: Exception) {
+            AppLogger.e("Failed to export data files", e)
+            viewModel.appendLog("Export failed: ${e.message}")
+        }
     }
 }
