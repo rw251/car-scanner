@@ -6,9 +6,12 @@ import androidx.car.app.Screen
 import androidx.car.app.model.Action
 import androidx.car.app.model.ActionStrip
 import androidx.car.app.model.CarIcon
+import androidx.car.app.model.ItemList
+import androidx.car.app.model.Pane
+import androidx.car.app.model.PaneTemplate
+import androidx.car.app.model.Row
 import androidx.car.app.model.Template
 import androidx.car.app.navigation.model.NavigationTemplate
-import androidx.car.app.navigation.model.MessageInfo
 import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
@@ -24,7 +27,7 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Navigation screen that displays battery stats with map.
+ * Navigation screen that displays battery stats with full-screen map and collapsible side panel.
  */
 class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMapRenderer) : Screen(carContext), DefaultLifecycleObserver {
     private var bleManager: BleObdManager? = null
@@ -40,6 +43,7 @@ class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMa
     private var distanceMiles: Double? = null
     private var avgSpeedMph: Double? = null
     private var locationJob: Job? = null
+    private var panelExpanded: Boolean = false
 
     init {
         lifecycle.addObserver(this)
@@ -73,66 +77,81 @@ class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMa
 
         LocationTracker.start(carContext) { /* Car UI stays quiet; logs handled on phone */ }
         
-        val builder = NavigationTemplate.Builder()
-
-        // Simple message info for now
-        val statsText = "Battery: $socPercent% ($socRaw) | Temp: ${tempCelsius}°C | Status: $connectionStatus"
-        val messageInfo = MessageInfo.Builder(statsText).build()
-        builder.setNavigationInfo(messageInfo)
+        // Update renderer with current stats
+        mapRenderer.isPanelExpanded = panelExpanded
+        mapRenderer.socPercent = socPercent
+        mapRenderer.batteryTempC = tempCelsius
+        mapRenderer.connectionStatus = connectionStatus
+        // Check if we're in a connected/ready state
+        val isConnected = connectionStatus == "READY" || connectionStatus == "READY (DEV)"
         
-        // Add action strip for BLE controls
-        val actionStrip = ActionStrip.Builder()
-        
-        if (permissionsMissing) {
-            actionStrip.addAction(
-                Action.Builder()
-                    .setTitle("Open Phone")
-                    .setOnClickListener { openPhoneApp() }
-                    .build()
-            )
-        } else {
-            // Connect/Disconnect button
-            actionStrip.addAction(
-                Action.Builder()
-                    .setTitle(if (connectionStatus == "DISCONNECTED") "Connect" else "Disconnect")
-                    .setOnClickListener {
-                        if (connectionStatus == "DISCONNECTED") {
-                            connectToBle()
-                        } else {
-                            disconnectBle()
-                        }
-                    }
-                    .build()
-            )
-            
-            // Refresh button when connected
-            if (connectionStatus == "READY" || connectionStatus == "READY (DEV)") {
-                actionStrip.addAction(
-                    Action.Builder()
-                        .setTitle("Refresh")
-                        .setOnClickListener { bleManager?.requestSoc() }
-                        .build()
-                )
-            }
+        // Force panel expanded when not connected
+        if (!isConnected) {
+            panelExpanded = true
         }
         
-        builder.setActionStrip(actionStrip.build())
+        mapRenderer.distanceMiles = distanceMiles
+        mapRenderer.avgSpeedMph = avgSpeedMph
+        mapRenderer.isConnected = isConnected
         
-        // Add map action strip with recenter button
-        val mapActionStrip = ActionStrip.Builder()
-            .addAction(
-                Action.Builder()
-                    .setIcon(
-                        CarIcon.Builder(
-                            IconCompat.createWithResource(carContext, com.rw251.pleasecharge.R.drawable.ic_my_location)
-                        ).build()
-                    )
-                    .setOnClickListener { mapRenderer.handleRecenter() }
-                    .build()
-            )
-            .build()
+        // Use NavigationTemplate for full-screen map
+        val builder = NavigationTemplate.Builder()
         
-        builder.setMapActionStrip(mapActionStrip)
+        // Disable background mode to keep action strips always visible
+        builder.setBackgroundColor(androidx.car.app.model.CarColor.DEFAULT)
+
+        // Only show panel toggle button when connected
+        if (isConnected) {
+            val mapActionStrip = ActionStrip.Builder()
+                .addAction(
+                    Action.Builder()
+                        .setIcon(
+                            CarIcon.Builder(
+                                IconCompat.createWithResource(
+                                    carContext, 
+                                    if (panelExpanded) com.rw251.pleasecharge.R.drawable.ic_close
+                                    else com.rw251.pleasecharge.R.drawable.ic_panel_expand
+                                )
+                            ).build()
+                        )
+                        .setOnClickListener { 
+                            panelExpanded = !panelExpanded
+                            invalidate()
+                        }
+                        .build()
+                )
+                .build()
+            
+            builder.setMapActionStrip(mapActionStrip)
+        }
+        
+        // NavigationTemplate requires an action strip - use Connect button when disconnected
+        val actionStrip = if (permissionsMissing) {
+            ActionStrip.Builder()
+                .addAction(
+                    Action.Builder()
+                        .setTitle("Open Phone")
+                        .setOnClickListener { openPhoneApp() }
+                        .build()
+                )
+                .build()
+        } else if (!isConnected) {
+            // Show Connect button when not connected
+            ActionStrip.Builder()
+                .addAction(
+                    Action.Builder()
+                        .setTitle("Connect")
+                        .setOnClickListener { connectToBle() }
+                        .build()
+                )
+                .build()
+        } else {
+            // Use PAN action which shouldn't show a visible icon
+            ActionStrip.Builder()
+                .addAction(Action.PAN)
+                .build()
+        }
+        builder.setActionStrip(actionStrip)
 
         return builder.build()
     }

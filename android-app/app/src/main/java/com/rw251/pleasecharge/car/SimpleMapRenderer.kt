@@ -56,7 +56,7 @@ class SimpleMapRenderer(
         isAntiAlias = true
         style = Paint.Style.STROKE
         strokeWidth = 4f
-        alpha = 150
+        alpha = 0  // Hidden - was showing as unwanted circle
     }
     
     private val locationOuterRingPaint = Paint().apply {
@@ -78,6 +78,45 @@ class SimpleMapRenderer(
         isAntiAlias = true
     }
     
+    private val panelBackgroundPaint = Paint().apply {
+        color = "#FFFFFF".toColorInt()  // Solid white background
+        isAntiAlias = false  // No anti-aliasing for sharp edges
+        style = Paint.Style.FILL
+    }
+    
+    private val buttonBackgroundPaint = Paint().apply {
+        color = "#2196F3".toColorInt()  // Blue button
+        isAntiAlias = true
+        style = Paint.Style.FILL
+    }
+    
+    private val buttonTextPaint = Paint().apply {
+        color = Color.WHITE
+        textSize = 20f
+        isAntiAlias = true
+        textAlign = Paint.Align.CENTER
+        isFakeBoldText = true
+    }
+    
+    private val panelTextPaint = Paint().apply {
+        color = Color.DKGRAY
+        textSize = 18f
+        isAntiAlias = true
+    }
+    
+    private val panelLabelPaint = Paint().apply {
+        color = Color.GRAY
+        textSize = 14f
+        isAntiAlias = true
+    }
+    
+    private val panelValuePaint = Paint().apply {
+        color = Color.BLACK
+        textSize = 24f
+        isAntiAlias = true
+        isFakeBoldText = true
+    }
+    
     // Current map state
     private var userLat: Double = 0.0
     private var userLon: Double = 0.0
@@ -87,6 +126,21 @@ class SimpleMapRenderer(
     private var zoomLevel = DEFAULT_ZOOM
     private var offsetX = 0f
     private var offsetY = 0f
+    
+    // Panel state
+    var isPanelExpanded = false
+        set(value) {
+            field = value
+            renderFrame()
+        }
+    
+    var socPercent: String = "--"
+    var batteryTempC: String = "--"
+    var connectionStatus: String = "DISCONNECTED"
+    var distanceMiles: Double? = null
+    var avgSpeedMph: Double? = null
+    var isConnected: Boolean = false
+    var onConnectClick: (() -> Unit)? = null
     
     val surfaceCallback = object : SurfaceCallback {
         override fun onSurfaceAvailable(surfaceContainer: SurfaceContainer) {
@@ -131,27 +185,11 @@ class SimpleMapRenderer(
         }
         
         override fun onScroll(distanceX: Float, distanceY: Float) {
-            synchronized(this@SimpleMapRenderer) {
-                offsetX -= distanceX
-                offsetY -= distanceY
-                renderFrame()
-            }
+            // Disabled - map should not be draggable
         }
         
         override fun onScale(focusX: Float, focusY: Float, newScaleFactor: Float) {
-            synchronized(this@SimpleMapRenderer) {
-                // Zoom in/out based on scale factor
-                if (newScaleFactor > 1.1f && zoomLevel < MAX_ZOOM) {
-                    zoomLevel++
-                    offsetX = 0f
-                    offsetY = 0f
-                } else if (newScaleFactor < 0.9f && zoomLevel > MIN_ZOOM) {
-                    zoomLevel--
-                    offsetX = 0f
-                    offsetY = 0f
-                }
-                renderFrame()
-            }
+            // Disabled - map should not be zoomable
         }
     }
     
@@ -241,8 +279,10 @@ class SimpleMapRenderer(
             // Draw map tiles centered on user location
             drawTiles(canvas, bounds)
             
-            // Draw user location marker at center
-            val centerX = bounds.centerX().toFloat() + offsetX
+            // Draw user location marker - adjust center when panel is open
+            val panelWidth = if (isPanelExpanded) bounds.width() / 2 else 0
+            val availableWidth = bounds.width() - panelWidth
+            val centerX = bounds.left + panelWidth + (availableWidth / 2f) + offsetX
             val centerY = bounds.centerY().toFloat() + offsetY
             drawLocationMarker(canvas, centerX, centerY)
         } else {
@@ -250,14 +290,21 @@ class SimpleMapRenderer(
             canvas.drawText("Waiting for GPS location...", 
                 bounds.centerX().toFloat(), bounds.centerY().toFloat(), textPaint)
         }
+        
+        // Draw collapsible panel overlay if expanded
+        if (isPanelExpanded) {
+            drawPanel(canvas, bounds)
+        }
     }
     
     private fun drawTiles(canvas: Canvas, bounds: Rect) {
         // Get pixel position for user location
         val (userPixelX, userPixelY) = tileCache.getPixelOffset(userLat, userLon, zoomLevel)
         
-        // Calculate screen center (where user should appear)
-        val screenCenterX = bounds.centerX().toFloat() + offsetX
+        // Calculate screen center - adjust when panel is open
+        val panelWidth = if (isPanelExpanded) bounds.width() / 2 else 0
+        val availableWidth = bounds.width() - panelWidth
+        val screenCenterX = bounds.left + panelWidth + (availableWidth / 2f) + offsetX
         val screenCenterY = bounds.centerY().toFloat() + offsetY
         
         // Calculate which tiles we need to cover the visible area
@@ -317,9 +364,89 @@ class SimpleMapRenderer(
         canvas.drawCircle(x, y, 10f, locationDotPaint)
     }
     
+    private fun drawPanel(canvas: Canvas, bounds: Rect) {
+        // Panel takes up left half of screen (full height)
+        val panelWidth = bounds.width() / 2
+        val panelRect = RectF(
+            bounds.left.toFloat(),
+            bounds.top.toFloat(),
+            bounds.left.toFloat() + panelWidth,
+            bounds.bottom.toFloat()
+        )
+        
+        // Draw opaque background (no rounded corners)
+        canvas.drawRect(panelRect, panelBackgroundPaint)
+        
+        // Draw stats with compact spacing, starting from top
+        val leftMargin = panelRect.left + 20f
+        var yPos = panelRect.top + 20f
+        
+        // Show Connect button when not connected, otherwise show status
+        if (!isConnected) {
+            // Draw "Tap to Connect" button area
+            canvas.drawText("STATUS", leftMargin, yPos, panelLabelPaint)
+            yPos += 20f
+            canvas.drawText("Not Connected", leftMargin, yPos, panelValuePaint)
+            yPos += 30f
+            
+            // Draw connect button
+            val buttonRect = RectF(
+                leftMargin,
+                yPos,
+                panelRect.right - 20f,
+                yPos + 40f
+            )
+            canvas.drawRoundRect(buttonRect, 8f, 8f, buttonBackgroundPaint)
+            canvas.drawText("CONNECT", buttonRect.centerX(), buttonRect.centerY() + 7f, buttonTextPaint)
+            yPos += 60f
+        } else {
+            // Connection Status
+            canvas.drawText("STATUS", leftMargin, yPos, panelLabelPaint)
+            yPos += 20f
+            canvas.drawText(connectionStatus, leftMargin, yPos, panelValuePaint)
+            yPos += 40f
+        }
+        
+        // Battery SOC
+        canvas.drawText("BATTERY", leftMargin, yPos, panelLabelPaint)
+        yPos += 20f
+        canvas.drawText("$socPercent%", leftMargin, yPos, panelValuePaint)
+        yPos += 40f
+        
+        // Battery Temperature
+        canvas.drawText("TEMPERATURE", leftMargin, yPos, panelLabelPaint)
+        yPos += 20f
+        canvas.drawText("${batteryTempC}°C", leftMargin, yPos, panelValuePaint)
+        yPos += 40f
+        
+        // Distance
+        canvas.drawText("DISTANCE", leftMargin, yPos, panelLabelPaint)
+        yPos += 20f
+        val distText = distanceMiles?.let { String.format("%.2f mi", it) } ?: "--"
+        canvas.drawText(distText, leftMargin, yPos, panelValuePaint)
+        yPos += 40f
+        
+        // Speed
+        canvas.drawText("AVG SPEED", leftMargin, yPos, panelLabelPaint)
+        yPos += 20f
+        val speedText = avgSpeedMph?.let { String.format("%.1f mph", it) } ?: "--"
+        canvas.drawText(speedText, leftMargin, yPos, panelValuePaint)
+        yPos += 40f
+        
+        // Location info
+        if (hasLocation) {
+            canvas.drawText("LOCATION", leftMargin, yPos, panelLabelPaint)
+            yPos += 20f
+            canvas.drawText(String.format("%.5f°", userLat), leftMargin, yPos, panelTextPaint)
+            yPos += 22f
+            canvas.drawText(String.format("%.5f°", userLon), leftMargin, yPos, panelTextPaint)
+        }
+    }
+    
     fun cleanup() {
         renderJob?.cancel()
         scope.cancel()
         tileCache.clear()
     }
 }
+
