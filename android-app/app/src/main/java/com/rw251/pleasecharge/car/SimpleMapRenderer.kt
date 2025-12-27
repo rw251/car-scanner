@@ -8,7 +8,7 @@ import androidx.car.app.SurfaceCallback
 import androidx.car.app.SurfaceContainer
 import androidx.lifecycle.Lifecycle
 import androidx.core.graphics.toColorInt
-import kotlinx.coroutines.*
+import java.util.Locale
 
 /**
  * Surface renderer that draws OpenStreetMap tiles with the user's location.
@@ -21,8 +21,6 @@ class SimpleMapRenderer(
     
     companion object {
         private const val TAG = "SimpleMapRenderer"
-        private const val MAX_ZOOM = 18
-        private const val MIN_ZOOM = 10
         private const val DEFAULT_ZOOM = 16
         private const val TILE_SIZE = 256
     }
@@ -32,8 +30,6 @@ class SimpleMapRenderer(
     private var stableArea: Rect? = null
     
     private val tileCache = TileCache()
-    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    private var renderJob: Job? = null
     
     private val backgroundPaint = Paint().apply {
         color = "#E8E8E8".toColorInt()
@@ -140,7 +136,6 @@ class SimpleMapRenderer(
     var distanceMiles: Double? = null
     var avgSpeedMph: Double? = null
     var isConnected: Boolean = false
-    var onConnectClick: (() -> Unit)? = null
     
     val surfaceCallback = object : SurfaceCallback {
         override fun onSurfaceAvailable(surfaceContainer: SurfaceContainer) {
@@ -214,15 +209,6 @@ class SimpleMapRenderer(
             }
         }
     }
-    
-    fun handleRecenter() {
-        synchronized(this) {
-            offsetX = 0f
-            offsetY = 0f
-            zoomLevel = DEFAULT_ZOOM
-            renderFrame()
-        }
-    }
 
     private fun renderFrame() {
         if (!surfaceReady) {
@@ -249,7 +235,7 @@ class SimpleMapRenderer(
             if (canvas != null) {
                 renderMap(canvas, currentVisibleArea)
             }
-        } catch (e: IllegalArgumentException) {
+        } catch (_: IllegalArgumentException) {
             // Surface became invalid between check and lock - this is expected, just skip
             return
         } catch (e: Exception) {
@@ -259,7 +245,7 @@ class SimpleMapRenderer(
                 if (canvas != null) {
                     currentSurface.unlockCanvasAndPost(canvas)
                 }
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 // Ignore unlock errors
             }
         }
@@ -422,14 +408,14 @@ class SimpleMapRenderer(
         // Distance
         canvas.drawText("DISTANCE", leftMargin, yPos, panelLabelPaint)
         yPos += 20f
-        val distText = distanceMiles?.let { String.format("%.2f mi", it) } ?: "--"
+        val distText = distanceMiles?.let { String.format(Locale.getDefault(), "%.2f mi", it) } ?: "--"
         canvas.drawText(distText, leftMargin, yPos, panelValuePaint)
         yPos += 40f
         
         // Speed
         canvas.drawText("AVG SPEED", leftMargin, yPos, panelLabelPaint)
         yPos += 20f
-        val speedText = avgSpeedMph?.let { String.format("%.1f mph", it) } ?: "--"
+        val speedText = avgSpeedMph?.let { String.format(Locale.getDefault(),"%.1f mph", it) } ?: "--"
         canvas.drawText(speedText, leftMargin, yPos, panelValuePaint)
         yPos += 40f
         
@@ -437,16 +423,10 @@ class SimpleMapRenderer(
         if (hasLocation) {
             canvas.drawText("LOCATION", leftMargin, yPos, panelLabelPaint)
             yPos += 20f
-            canvas.drawText(String.format("%.5f°", userLat), leftMargin, yPos, panelTextPaint)
+            canvas.drawText(String.format(Locale.getDefault(),"%.5f°", userLat), leftMargin, yPos, panelTextPaint)
             yPos += 22f
-            canvas.drawText(String.format("%.5f°", userLon), leftMargin, yPos, panelTextPaint)
+            canvas.drawText(String.format(Locale.getDefault(),"%.5f°", userLon), leftMargin, yPos, panelTextPaint)
         }
-    }
-    
-    fun cleanup() {
-        renderJob?.cancel()
-        scope.cancel()
-        tileCache.clear()
     }
 }
 
