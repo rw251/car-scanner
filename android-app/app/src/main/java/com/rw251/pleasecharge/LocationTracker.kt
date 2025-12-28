@@ -32,6 +32,8 @@ object LocationTracker {
     private const val MEDIAN_TOLERANCE_MPH = 25.0        // Reject samples far from recent median speed
     private const val TRIM_WINDOW_MS = 30_000L           // Keep 30s of history for smoothing
     private const val METERS_PER_MILE = 1609.344
+    private const val STUCK_FILTER_THRESHOLD = 4         // Number of consecutive fallbacks before reset
+    private const val GPS_MOVEMENT_THRESHOLD_METERS = 5.0 // Minimum GPS movement to consider valid
 
     data class Metrics(
         val distanceMiles: Double,
@@ -46,7 +48,8 @@ object LocationTracker {
         val lon: Double,
         val timestampMs: Long,
         val segmentDistanceMeters: Double,
-        val segmentSpeedMph: Double
+        val segmentSpeedMph: Double,
+        val wasFallback: Boolean = false
     )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -57,6 +60,7 @@ object LocationTracker {
     private var client: FusedLocationProviderClient? = null
     private var callback: LocationCallback? = null
     private val lock = Any()
+    private var consecutiveFallbacks = 0
 
     fun hasPermission(context: Context): Boolean {
         val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -98,6 +102,7 @@ object LocationTracker {
         synchronized(lock) {
             samples.clear()
             _metrics.value = null
+            consecutiveFallbacks = 0
         }
     }
 
@@ -115,7 +120,11 @@ object LocationTracker {
             val medianSpeed = medianRecentSpeed()
             val accel = if (prevSpeed != null && deltaSec > 0) (rawSpeedMph - prevSpeed) / deltaSec else 0.0
 
-            val looksRogue = prev != null && (
+            // Check if we're stuck in a fallback loop - GPS is clearly moving but filter keeps rejecting
+            val gpsShowsRealMovement = rawDistance > GPS_MOVEMENT_THRESHOLD_METERS && rawSpeedMph < MAX_SPEED_MPH
+            val filterIsStuck = consecutiveFallbacks >= STUCK_FILTER_THRESHOLD && gpsShowsRealMovement
+            
+            val looksRogue = prev != null && !filterIsStuck && (
                 rawSpeedMph > MAX_SPEED_MPH ||
                 abs(accel) > MAX_ACCEL_MPH_PER_SEC ||
                 (medianSpeed != null && abs(rawSpeedMph - medianSpeed) > MEDIAN_TOLERANCE_MPH)
@@ -123,14 +132,27 @@ object LocationTracker {
 
             val distanceMeters: Double
             val speedMph: Double
-            if (looksRogue) {
+            val wasFallback: Boolean
+            
+            if (filterIsStuck) {
+                // Filter has been stuck - trust the GPS and reset
+                distanceMeters = rawDistance
+                speedMph = min(rawSpeedMph, MAX_SPEED_MPH)
+                wasFallback = false
+                consecutiveFallbacks = 0
+                onLog("Filter reset - GPS shows movement at ${rawSpeedMph.toInt()} mph")
+            } else if (looksRogue) {
                 val fallbackSpeed = medianSpeed ?: prevSpeed ?: 0.0
                 distanceMeters = mphToMps(fallbackSpeed) * deltaSec
                 speedMph = fallbackSpeed
-                onLog("Filtered rogue location sample (raw ${rawSpeedMph.toInt()} mph)")
+                wasFallback = true
+                consecutiveFallbacks++
+                onLog("Filtered rogue location sample (raw ${rawSpeedMph.toInt()} mph, fallback count: $consecutiveFallbacks)")
             } else {
                 distanceMeters = rawDistance
                 speedMph = min(rawSpeedMph, MAX_SPEED_MPH)
+                wasFallback = false
+                consecutiveFallbacks = 0
             }
 
             samples.add(
@@ -139,7 +161,8 @@ object LocationTracker {
                     lon = lon,
                     timestampMs = timestamp,
                     segmentDistanceMeters = distanceMeters,
-                    segmentSpeedMph = speedMph
+                    segmentSpeedMph = speedMph,
+                    wasFallback = wasFallback
                 )
             )
             trimSamplesLocked()
