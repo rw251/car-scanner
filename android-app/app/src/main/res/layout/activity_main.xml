@@ -270,6 +270,8 @@
                     android:layout_weight="1"
                     android:layout_marginEnd="8dp"
                     android:text="View Logs"
+                    android:textSize="16sp"
+                    android:minHeight="48dp"
                     style="@style/Widget.Material3.Button.OutlinedButton" />
 
                 <Button
@@ -279,6 +281,8 @@
                     android:layout_weight="1"
                     android:layout_marginStart="8dp"
                     android:text="Export CSV"
+                    android:textSize="16sp"
+                    android:minHeight="48dp"
                     style="@style/Widget.Material3.Button.OutlinedButton" />
             </LinearLayout>
         </LinearLayout>

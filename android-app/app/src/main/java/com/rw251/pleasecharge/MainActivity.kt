@@ -107,11 +107,19 @@ class MainActivity : AppCompatActivity() {
     private fun setupMap() {
         binding.mapView.apply {
             setTileSource(TileSourceFactory.MAPNIK)
-            setMultiTouchControls(true)
-            controller.setZoom(16.0)
+            // Disable all touch interactions - map is fixed to user location
+            setMultiTouchControls(false)
+            setBuiltInZoomControls(false)
+            // Disable scrolling and zooming
+            setScrollableAreaLimitDouble(null)
+            isFlingEnabled = false
+            controller.setZoom(17.0)
             // Default to UK center initially
             controller.setCenter(GeoPoint(54.0, -2.0))
         }
+        
+        // Disable touch events on the map
+        binding.mapView.setOnTouchListener { _, _ -> true }
         
         // Create location marker
         locationMarker = Marker(binding.mapView).apply {
@@ -124,11 +132,23 @@ class MainActivity : AppCompatActivity() {
     
     private fun setupBottomSheet() {
         bottomSheetBehavior = BottomSheetBehavior.from(binding.bottomSheet)
+        
+        // Get navigation bar height to add to peek height
+        val navBarHeight = getNavigationBarHeight()
+        
         bottomSheetBehavior.apply {
-            peekHeight = resources.getDimensionPixelSize(R.dimen.bottom_sheet_peek_height)
+            peekHeight = resources.getDimensionPixelSize(R.dimen.bottom_sheet_peek_height) + navBarHeight
             isHideable = false
             state = BottomSheetBehavior.STATE_COLLAPSED
         }
+        
+        // Add padding for navigation bar
+        binding.bottomSheet.setPadding(
+            binding.bottomSheet.paddingLeft,
+            binding.bottomSheet.paddingTop,
+            binding.bottomSheet.paddingRight,
+            binding.bottomSheet.paddingBottom + navBarHeight
+        )
         
         // Toggle expanded content visibility based on state
         bottomSheetBehavior.addBottomSheetCallback(object : BottomSheetBehavior.BottomSheetCallback() {
@@ -485,6 +505,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun nowString(): String = 
         SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+    
+    private fun getNavigationBarHeight(): Int {
+        val resourceId = resources.getIdentifier("navigation_bar_height", "dimen", "android")
+        return if (resourceId > 0) {
+            resources.getDimensionPixelSize(resourceId)
+        } else {
+            0
+        }
+    }
 
     private fun startBleForegroundService() {
         val intent = Intent(this, BleForegroundService::class.java).apply {
