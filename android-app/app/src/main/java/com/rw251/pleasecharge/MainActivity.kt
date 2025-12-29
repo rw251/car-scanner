@@ -3,6 +3,7 @@ package com.rw251.pleasecharge
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -11,23 +12,28 @@ import androidx.activity.viewModels
 import androidx.annotation.RequiresPermission
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.rw251.pleasecharge.ble.BleObdManager
 import com.rw251.pleasecharge.databinding.ActivityMainBinding
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import org.osmdroid.config.Configuration
+import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.overlay.Marker
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /**
- * Single-screen activity for BLE OBD connection.
- * - Connect button to initiate BLE scan/connect
- * - Status bar showing connection state
- * - Scrollable log panel
- * - SOC button (enabled when ready) + SOC value display
+ * Full-screen map activity with collapsible stats overlay.
+ * - Full-screen OSM map with current location marker
+ * - Collapsible bottom sheet showing SOC, temp, speed
+ * - View Logs and Export buttons in expanded panel
  */
 class MainActivity : AppCompatActivity() {
 
@@ -37,6 +43,15 @@ class MainActivity : AppCompatActivity() {
     private var manager: BleObdManager? = null
     private var locationJob: Job? = null
     private var locationStarted = false
+    private var locationMarker: Marker? = null
+    private lateinit var bottomSheetBehavior: BottomSheetBehavior<View>
+    
+    // Track current stats for display
+    private var currentSocPct: Double? = null
+    private var currentTempC: Double? = null
+    private var currentSpeedMph: Double? = null
+    private var currentDistanceMiles: Double? = null
+    private var journeyStartTime: Long? = null
 
     @SuppressLint("MissingPermission")
     private val permissionLauncher = registerForActivityResult(
@@ -45,14 +60,12 @@ class MainActivity : AppCompatActivity() {
         val allGranted = results.values.all { it }
         if (allGranted) {
             AppLogger.i("All permissions granted")
-            viewModel.appendLog("Permissions granted")
             // Now request background location if needed (Android 10+)
             maybeRequestBackgroundLocation()
             startLocationTracking()
             startBleManager()
         } else {
             AppLogger.w("Permissions denied: $results")
-            viewModel.appendLog("Permissions denied - cannot scan for BLE devices")
         }
     }
     
@@ -62,10 +75,8 @@ class MainActivity : AppCompatActivity() {
     ) { granted ->
         if (granted) {
             AppLogger.i("Background location permission granted")
-            viewModel.appendLog("Background location enabled - will record when screen is off")
         } else {
             AppLogger.w("Background location permission denied")
-            viewModel.appendLog("Background location denied - recording will stop when screen is off")
         }
     }
 
@@ -76,50 +87,104 @@ class MainActivity : AppCompatActivity() {
         AppLogger.init(this)
         DataCapture.init(this)
         AppLogger.i("MainActivity created")
+        
+        // Initialize osmdroid configuration
+        Configuration.getInstance().userAgentValue = packageName
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Hide action bar for cleaner single-screen look
+        // Hide action bar for full-screen map
         supportActionBar?.hide()
 
-        // Ensure content respects status bar / display cutout insets
-        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, true)
-
+        setupMap()
+        setupBottomSheet()
         setupUI()
         observeViewModel()
         maybeStartLocationTracking()
-
-        // Apply window insets so UI content stays clear of status bar / notches
-        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(binding.root) { v, insets ->
-            val sysInsets = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-            v.setPadding(v.paddingLeft, sysInsets.top + v.paddingTop, v.paddingRight, sysInsets.bottom + v.paddingBottom)
-            androidx.core.view.WindowInsetsCompat.CONSUMED
+    }
+    
+    private fun setupMap() {
+        binding.mapView.apply {
+            setTileSource(TileSourceFactory.MAPNIK)
+            setMultiTouchControls(true)
+            controller.setZoom(16.0)
+            // Default to UK center initially
+            controller.setCenter(GeoPoint(54.0, -2.0))
         }
+        
+        // Create location marker
+        locationMarker = Marker(binding.mapView).apply {
+            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+            icon = ContextCompat.getDrawable(this@MainActivity, R.drawable.location_dot)
+            title = "Current Location"
+        }
+        binding.mapView.overlays.add(locationMarker)
+    }
+    
+    private fun setupBottomSheet() {
+        bottomSheetBehavior = BottomSheetBehavior.from(binding.bottomSheet)
+        bottomSheetBehavior.apply {
+            peekHeight = resources.getDimensionPixelSize(R.dimen.bottom_sheet_peek_height)
+            isHideable = false
+            state = BottomSheetBehavior.STATE_COLLAPSED
+        }
+        
+        // Toggle expanded content visibility based on state
+        bottomSheetBehavior.addBottomSheetCallback(object : BottomSheetBehavior.BottomSheetCallback() {
+            override fun onStateChanged(bottomSheet: View, newState: Int) {
+                binding.expandedContent.visibility = when (newState) {
+                    BottomSheetBehavior.STATE_EXPANDED -> View.VISIBLE
+                    BottomSheetBehavior.STATE_COLLAPSED -> View.GONE
+                    else -> binding.expandedContent.visibility
+                }
+            }
+
+            override fun onSlide(bottomSheet: View, slideOffset: Float) {
+                // Fade in expanded content as sheet expands
+                binding.expandedContent.alpha = slideOffset.coerceIn(0f, 1f)
+                if (slideOffset > 0.1f) {
+                    binding.expandedContent.visibility = View.VISIBLE
+                }
+            }
+        })
     }
 
     @SuppressLint("MissingPermission")
     private fun setupUI() {
-        binding.btnConnect.setOnClickListener {
-            ensurePermissionsAndStart()
+        // Connection overlay button - handles both Connect and Cancel
+        binding.connectButton.setOnClickListener {
+            val currentState = viewModel.state.value
+            when (currentState) {
+                BleObdManager.State.DISCONNECTED -> {
+                    ensurePermissionsAndStart()
+                }
+                BleObdManager.State.SCANNING,
+                BleObdManager.State.CONNECTING,
+                BleObdManager.State.DISCOVERING,
+                BleObdManager.State.CONFIGURING -> {
+                    // Cancel the connection
+                    manager?.cancel()
+                    stopBleForegroundService()
+                }
+                BleObdManager.State.READY -> {
+                    // Already connected, hide overlay
+                    binding.connectionOverlay.visibility = View.GONE
+                }
+            }
         }
 
-        binding.btnCancel.setOnClickListener @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT) {
-            manager?.cancel()
-            stopBleForegroundService()
-        }
-
-        binding.btnSoc.setOnClickListener {
-            manager?.requestSoc()
-        }
-
-        binding.btnViewLogs.setOnClickListener {
+        // Bottom sheet buttons
+        binding.viewLogsButton.setOnClickListener {
             startActivity(Intent(this, LogViewerActivity::class.java))
         }
 
-        binding.btnExportData.setOnClickListener {
+        binding.exportButton.setOnClickListener {
             exportDataFiles()
         }
+        
+        // Initially show connection overlay
+        updateConnectionOverlay(BleObdManager.State.DISCONNECTED)
     }
 
     @SuppressLint("SetTextI18n")
@@ -127,75 +192,115 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
-                    viewModel.status.collect { status ->
-                        binding.tvStatus.text = status
-                    }
-                }
-                launch {
-                    viewModel.logs.collect { logs ->
-                        binding.tvLogs.text = logs.joinToString("\n")
-                        binding.logScroll.post { binding.logScroll.fullScroll(View.FOCUS_DOWN) }
-                    }
-                }
-                launch {
-                    viewModel.socDisplay.collect { soc ->
-                        binding.tvSoc.text = soc ?: "SOC: -- (raw: --)"
-                    }
-                }
-                launch {
-                    viewModel.socTime.collect { time ->
-                        binding.tvSocTime.text = time ?: "Time: --:--:--"
-                    }
-                }
-                launch {
-                    viewModel.isReady.collect { ready ->
-                        binding.btnSoc.isEnabled = ready
-                    }
-                }
-                launch {
                     viewModel.state.collect { state ->
-                        updateButtonStates(state)
+                        updateConnectionOverlay(state)
+                        updateBleStatus(state)
                     }
                 }
                 launch {
                     viewModel.distanceMiles.collect { miles ->
-                        binding.tvDistance.text = miles?.let {
-                            "Distance (10s): ${String.format(Locale.getDefault(), "%.2f", it)} mi"
-                        } ?: "Distance (10s): --"
+                        currentDistanceMiles = miles
+                        updateDistanceDisplay()
                     }
                 }
                 launch {
                     viewModel.avgSpeedMph.collect { mph ->
-                        binding.tvSpeed.text = mph?.let {
-                            "Avg speed (10s): ${String.format(Locale.getDefault(), "%.1f", it)} mph"
-                        } ?: "Avg speed (10s): --"
+                        currentSpeedMph = mph
+                        updateSpeedDisplay()
                     }
                 }
             }
         }
     }
-
-    private fun updateButtonStates(state: BleObdManager.State) {
+    
+    private fun updateConnectionOverlay(state: BleObdManager.State) {
         when (state) {
             BleObdManager.State.DISCONNECTED -> {
-                binding.btnConnect.isEnabled = true
-                binding.btnCancel.isEnabled = false
-                binding.btnSoc.isEnabled = false
+                binding.connectionOverlay.visibility = View.VISIBLE
+                binding.connectionStatus.text = "Not Connected"
+                binding.connectButton.text = "Connect to OBD"
+                binding.connectButton.isEnabled = true
             }
-            BleObdManager.State.SCANNING,
-            BleObdManager.State.CONNECTING,
+            BleObdManager.State.SCANNING -> {
+                binding.connectionOverlay.visibility = View.VISIBLE
+                binding.connectionStatus.text = "Scanning..."
+                binding.connectButton.text = "Cancel"
+                binding.connectButton.isEnabled = true
+            }
+            BleObdManager.State.CONNECTING -> {
+                binding.connectionOverlay.visibility = View.VISIBLE
+                binding.connectionStatus.text = "Connecting..."
+                binding.connectButton.text = "Cancel"
+                binding.connectButton.isEnabled = true
+            }
             BleObdManager.State.DISCOVERING,
             BleObdManager.State.CONFIGURING -> {
-                binding.btnConnect.isEnabled = false
-                binding.btnCancel.isEnabled = true
-                binding.btnSoc.isEnabled = false
+                binding.connectionOverlay.visibility = View.VISIBLE
+                binding.connectionStatus.text = "Configuring..."
+                binding.connectButton.text = "Cancel"
+                binding.connectButton.isEnabled = true
             }
             BleObdManager.State.READY -> {
-                binding.btnConnect.isEnabled = false
-                binding.btnCancel.isEnabled = true
-                binding.btnSoc.isEnabled = true
+                binding.connectionOverlay.visibility = View.GONE
+                if (journeyStartTime == null) {
+                    journeyStartTime = System.currentTimeMillis()
+                }
             }
         }
+    }
+    
+    private fun updateBleStatus(state: BleObdManager.State) {
+        binding.bleStatus.text = "BLE: ${state.name.lowercase().replaceFirstChar { it.uppercase() }}"
+    }
+    
+    @SuppressLint("SetTextI18n")
+    private fun updateSocDisplay(pct: Double) {
+        currentSocPct = pct
+        binding.socValue.text = String.format(Locale.getDefault(), "%.0f", pct)
+    }
+    
+    @SuppressLint("SetTextI18n")
+    private fun updateTempDisplay(celsius: Double) {
+        currentTempC = celsius
+        binding.tempValue.text = String.format(Locale.getDefault(), "%.0f", celsius)
+    }
+    
+    @SuppressLint("SetTextI18n")
+    private fun updateSpeedDisplay() {
+        val speed = currentSpeedMph
+        binding.speedValue.text = speed?.let { 
+            String.format(Locale.getDefault(), "%.0f", it) 
+        } ?: "--"
+        
+        // Also update avg speed in expanded section
+        binding.avgSpeedValue.text = speed?.let { 
+            String.format(Locale.getDefault(), "%.0f", it) 
+        } ?: "--"
+    }
+    
+    @SuppressLint("SetTextI18n")
+    private fun updateDistanceDisplay() {
+        val dist = currentDistanceMiles
+        binding.distanceValue.text = dist?.let { 
+            String.format(Locale.getDefault(), "%.1f", it) 
+        } ?: "0.0"
+        
+        // Update duration
+        journeyStartTime?.let { start ->
+            val durationMs = System.currentTimeMillis() - start
+            val minutes = (durationMs / 60000).toInt()
+            val seconds = ((durationMs % 60000) / 1000).toInt()
+            binding.durationValue.text = String.format(Locale.getDefault(), "%d:%02d", minutes, seconds)
+        } ?: run {
+            binding.durationValue.text = "0:00"
+        }
+    }
+    
+    private fun updateMapLocation(lat: Double, lon: Double) {
+        val point = GeoPoint(lat, lon)
+        locationMarker?.position = point
+        binding.mapView.controller.animateTo(point)
+        binding.mapView.invalidate()
     }
 
     private fun maybeStartLocationTracking() {
@@ -213,7 +318,6 @@ class MainActivity : AppCompatActivity() {
         AppLogger.i("Starting location tracking")
         LocationTracker.start(applicationContext) { msg -> 
             AppLogger.d(msg, "LocationTracker")
-            viewModel.appendLog(msg)
         }
         if (locationJob == null) {
             locationJob = lifecycleScope.launch {
@@ -227,6 +331,10 @@ class MainActivity : AppCompatActivity() {
                             distanceMiles = it.distanceMiles,
                             timestamp = it.timestampMs
                         )
+                        // Update map with current location
+                        runOnUiThread {
+                            updateMapLocation(it.lat, it.lon)
+                        }
                     }
                 }
             }
@@ -319,15 +427,17 @@ class MainActivity : AppCompatActivity() {
                         display = "SOC: ${String.format(Locale.getDefault(), "%.1f", pct)}% (raw: $raw)",
                         time = "Time: ${nowString()}"
                     )
+                    // Update the map UI SOC display
+                    updateSocDisplay(pct)
                 }
             }
 
             override fun onTemp(celsius: Double, timestamp: Long) {
-                // Temperature not shown in simplified UI per plan
                 runOnUiThread {
                     AppLogger.i("Temperature received: $celsius°C")
                     DataCapture.logTemp(celsius, timestamp)
-                    viewModel.appendLog("Temp: ${String.format(Locale.getDefault(), "%.1f", celsius)} °C")
+                    // Update the map UI temp display
+                    updateTempDisplay(celsius)
                 }
             }
 
@@ -354,6 +464,16 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        binding.mapView.onResume()
+    }
+    
+    override fun onPause() {
+        super.onPause()
+        binding.mapView.onPause()
     }
 
     override fun onDestroy() {
