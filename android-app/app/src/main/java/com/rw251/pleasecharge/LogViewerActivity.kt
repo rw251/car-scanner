@@ -36,10 +36,6 @@ class LogViewerActivity : AppCompatActivity() {
         binding.btnClearLogs.setOnClickListener {
             showClearConfirmation()
         }
-
-        binding.btnShareLogs.setOnClickListener {
-            shareLogs()
-        }
     }
 
     private fun loadLogs() {

@@ -118,8 +118,9 @@ class MainActivity : AppCompatActivity() {
             controller.setCenter(GeoPoint(54.0, -2.0))
         }
         
-        // Disable touch events on the map
-        binding.mapView.setOnTouchListener { _, _ -> true }
+        // Note: We don't block touch events on the map
+        // The disabled zoom/scroll controls are enough to prevent map interaction
+        // This allows the bottom sheet to still receive swipe gestures
         
         // Create location marker
         locationMarker = Marker(binding.mapView).apply {
@@ -128,6 +129,10 @@ class MainActivity : AppCompatActivity() {
             title = "Current Location"
         }
         binding.mapView.overlays.add(locationMarker)
+        
+        // Note: We don't block touch events on the map anymore
+        // The disabled zoom/scroll controls are enough to prevent map interaction
+        // This allows the bottom sheet to still receive swipe gestures
     }
     
     private fun setupBottomSheet() {
@@ -135,37 +140,45 @@ class MainActivity : AppCompatActivity() {
         
         // Get navigation bar height to add to peek height
         val navBarHeight = getNavigationBarHeight()
+        val basePeekHeight = resources.getDimensionPixelSize(R.dimen.bottom_sheet_peek_height)
         
         bottomSheetBehavior.apply {
-            peekHeight = resources.getDimensionPixelSize(R.dimen.bottom_sheet_peek_height) + navBarHeight
+            peekHeight = basePeekHeight + navBarHeight
             isHideable = false
+            isFitToContents = true
             state = BottomSheetBehavior.STATE_COLLAPSED
         }
         
-        // Add padding for navigation bar
+        // Add padding for navigation bar (use fixed value, not cumulative)
+        val basePadding = resources.getDimensionPixelSize(R.dimen.activity_vertical_margin)
         binding.bottomSheet.setPadding(
             binding.bottomSheet.paddingLeft,
             binding.bottomSheet.paddingTop,
             binding.bottomSheet.paddingRight,
-            binding.bottomSheet.paddingBottom + navBarHeight
+            basePadding + navBarHeight
         )
+        
+        // Initially hide expanded content
+        binding.expandedContent.alpha = 0f
         
         // Toggle expanded content visibility based on state
         bottomSheetBehavior.addBottomSheetCallback(object : BottomSheetBehavior.BottomSheetCallback() {
             override fun onStateChanged(bottomSheet: View, newState: Int) {
-                binding.expandedContent.visibility = when (newState) {
-                    BottomSheetBehavior.STATE_EXPANDED -> View.VISIBLE
-                    BottomSheetBehavior.STATE_COLLAPSED -> View.GONE
-                    else -> binding.expandedContent.visibility
+                // Don't hide the view, just control alpha
+                when (newState) {
+                    BottomSheetBehavior.STATE_EXPANDED -> {
+                        binding.expandedContent.alpha = 1f
+                    }
+                    BottomSheetBehavior.STATE_COLLAPSED -> {
+                        binding.expandedContent.alpha = 0f
+                    }
+                    else -> { /* Keep current alpha */ }
                 }
             }
 
             override fun onSlide(bottomSheet: View, slideOffset: Float) {
-                // Fade in expanded content as sheet expands
+                // Fade in/out expanded content as sheet slides
                 binding.expandedContent.alpha = slideOffset.coerceIn(0f, 1f)
-                if (slideOffset > 0.1f) {
-                    binding.expandedContent.visibility = View.VISIBLE
-                }
             }
         })
     }
