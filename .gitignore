@@ -1,3 +1,4 @@
+.kotlin/
 .venv/
 elm.log
 node_modules/

@@ -34,6 +34,8 @@ const CHARS = {
   appearance: "00002a01-0000-1000-8000-00805f9b34fb",
   // Unknown service characteristic (mimic real device)
   unknownChar: "000018f1-0000-1000-8000-00805f9b34fb",
+  // DEV-only: Simulated GPS characteristic
+  devGps: "bef8d6c9-9c21-4c9e-b632-bd58c1009f00",
 };
 
 // D-Bus paths
@@ -56,8 +58,8 @@ class VehicleSimulator {
     // 57kWh battery
     this.batteryCapacity = 57; // kWh
 
-    // Random starting SOC between 40-95%
-    const startingSocPercent = 40 + Math.random() * 55;
+    // Start with high SOC (80-100%) for realistic "just charged" scenario
+    const startingSocPercent = 80 + Math.random() * 20;
     this._energyRemaining = (startingSocPercent / 100) * this.batteryCapacity; // kWh
 
     // SOH - slight degradation from new
@@ -65,7 +67,12 @@ class VehicleSimulator {
 
     // Battery state
     this._voltage = 1520; // ~380V
-    this._batteryTemp = 140; // 30°C
+
+    // Temperature: start between 4-25°C, stored in car format (value/2 - 40 = °C)
+    // So °C = 4-25 means value = (°C + 40) * 2 = 88-130
+    const startTempC = 4 + Math.random() * 21; // 4-25°C
+    this._batteryTemp = (startTempC + 40) * 2; // Convert to car format
+
     this._extTemp = 55; // 15°C
     this._odometer = 15000 + Math.floor(Math.random() * 10000);
 
@@ -73,6 +80,9 @@ class VehicleSimulator {
     this._mode = "static";
     this._speed = 0; // km/h (actual speed)
     this._lastUpdate = Date.now();
+
+    // Request counter for sped-up drain simulation
+    this._requestCount = 0;
 
     // Consumption: ~4 kWh per mile = ~2.5 kWh per km
     // At 100 km/h, that's 250 kW draw
@@ -86,6 +96,37 @@ class VehicleSimulator {
     console.log(`🔋 Battery: ${this.batteryCapacity} kWh`);
     console.log(`🔋 Starting SOC: ${this.getSocPercent().toFixed(1)}%`);
     console.log(`🔋 Energy: ${this._energyRemaining.toFixed(2)} kWh`);
+    console.log(`🌡️  Starting Temp: ${this.getBatteryTempCelsius().toFixed(1)}°C`);
+  }
+
+  // Called on each SOC/temp request to simulate sped-up drain
+  onDataRequest() {
+    this._requestCount++;
+
+    // Drain SOC by 0-0.5% on each request (sped up simulation)
+    const drainPercent = Math.random() * 0.5;
+    const drainEnergy = (drainPercent / 100) * this.batteryCapacity;
+    this._energyRemaining = Math.max(0, this._energyRemaining - drainEnergy);
+
+    // Fluctuate temperature by ±0.3°C
+    // In car format, 0.3°C = 0.6 units (since value/2 - 40 = °C)
+    const tempChange = (Math.random() - 0.5) * 2 * 0.3; // -0.3 to +0.3°C
+    const tempChangeUnits = tempChange * 2; // Convert to car format units
+    this._batteryTemp = Math.max(88, Math.min(130, this._batteryTemp + tempChangeUnits));
+
+    // Update voltage based on SOC
+    const socPercent = this.getSocPercent();
+    this._voltage = Math.floor(1400 + (socPercent / 100) * 200);
+
+    console.log(
+      `📊 Request #${this._requestCount}: SOC=${this.getSocPercent().toFixed(
+        1
+      )}% (-${drainPercent.toFixed(2)}%), Temp=${this.getBatteryTempCelsius().toFixed(1)}°C`
+    );
+  }
+
+  getBatteryTempCelsius() {
+    return this._batteryTemp / 2 - 40;
   }
 
   _updateSimulation() {
@@ -208,9 +249,10 @@ class VehicleSimulator {
       soh: `${(this._soh / 100).toFixed(2)}%`,
       voltage: `${(this._voltage * 0.25).toFixed(1)}V`,
       current: `${((this.current - 40000) * 0.025).toFixed(1)}A`,
-      batteryTemp: `${(this._batteryTemp / 2 - 40).toFixed(1)}°C`,
+      batteryTemp: `${this.getBatteryTempCelsius().toFixed(1)}°C`,
       speed: `${this._speed} km/h`,
       odometer: `${Math.floor(this._odometer)} km`,
+      requests: this._requestCount,
     };
   }
 
@@ -230,6 +272,125 @@ class VehicleSimulator {
 }
 
 const vehicle = new VehicleSimulator();
+
+// ============================================================================
+// GPS Simulator - Simulates car movement along roads
+// ============================================================================
+
+class GPSSimulator {
+  constructor() {
+    // Starting point: Manchester city center area
+    this._lat = 53.4808;
+    this._lon = -2.2426;
+
+    // Current heading (degrees, 0 = North, 90 = East)
+    this._heading = Math.random() * 360;
+
+    // Speed in km/h (will affect distance moved)
+    this._speedKmh = 0;
+
+    // Last update time
+    this._lastUpdate = Date.now();
+
+    // Road simulation: occasionally change direction (simulating turns)
+    this._nextTurnDistance = this._randomTurnDistance();
+    this._distanceSinceLastTurn = 0;
+
+    // Update GPS position every second
+    setInterval(() => this._updatePosition(), 1000);
+
+    console.log(`📍 GPS Start: ${this._lat.toFixed(6)}, ${this._lon.toFixed(6)}`);
+  }
+
+  _randomTurnDistance() {
+    // Turn every 100-500 meters
+    return 0.1 + Math.random() * 0.4;
+  }
+
+  _updatePosition() {
+    const now = Date.now();
+    const elapsedHours = (now - this._lastUpdate) / 1000 / 3600;
+    this._lastUpdate = now;
+
+    if (this._speedKmh <= 0) return;
+
+    // Distance traveled in km
+    const distanceKm = this._speedKmh * elapsedHours;
+    this._distanceSinceLastTurn += distanceKm;
+
+    // Check if we should turn
+    if (this._distanceSinceLastTurn >= this._nextTurnDistance) {
+      // Make a turn: -90 to +90 degrees (mostly straight-ish, occasionally sharp)
+      const turnAmount = (Math.random() - 0.5) * 90;
+      this._heading = (this._heading + turnAmount + 360) % 360;
+      this._distanceSinceLastTurn = 0;
+      this._nextTurnDistance = this._randomTurnDistance();
+    }
+
+    // Add small random variation to heading (road curves)
+    this._heading += (Math.random() - 0.5) * 5;
+    this._heading = (this._heading + 360) % 360;
+
+    // Convert heading to radians
+    const headingRad = (this._heading * Math.PI) / 180;
+
+    // Earth's radius in km
+    const R = 6371;
+
+    // Calculate new position
+    // Latitude change
+    const deltaLat = (distanceKm / R) * Math.cos(headingRad) * (180 / Math.PI);
+    // Longitude change (adjusted for latitude)
+    const deltaLon =
+      ((distanceKm / R) * Math.sin(headingRad) * (180 / Math.PI)) /
+      Math.cos((this._lat * Math.PI) / 180);
+
+    this._lat += deltaLat;
+    this._lon += deltaLon;
+
+    // Keep within reasonable bounds (UK area)
+    this._lat = Math.max(50, Math.min(58, this._lat));
+    this._lon = Math.max(-8, Math.min(2, this._lon));
+  }
+
+  setSpeed(kmh) {
+    this._speedKmh = Math.max(0, Math.min(200, kmh));
+  }
+
+  get lat() {
+    return this._lat;
+  }
+
+  get lon() {
+    return this._lon;
+  }
+
+  get speed() {
+    return this._speedKmh;
+  }
+
+  // Get GPS data as a string for BLE transmission
+  // Format: "lat,lon,speed" e.g. "53.480800,-2.242600,50.0"
+  getGPSString() {
+    return `${this._lat.toFixed(6)},${this._lon.toFixed(6)},${this._speedKmh.toFixed(1)}`;
+  }
+
+  getSummary() {
+    return {
+      lat: this._lat.toFixed(6),
+      lon: this._lon.toFixed(6),
+      heading: `${this._heading.toFixed(1)}°`,
+      speed: `${this._speedKmh} km/h`,
+    };
+  }
+}
+
+const gpsSimulator = new GPSSimulator();
+
+// Sync GPS speed with vehicle speed
+setInterval(() => {
+  gpsSimulator.setSpeed(vehicle._speed);
+}, 1000);
 
 // ============================================================================
 // OBD Command Processing
@@ -280,6 +441,7 @@ function processOBDPID(command) {
 
   switch (pid) {
     case "B046": // SOC
+      vehicle.onDataRequest(); // Trigger sped-up drain and temp fluctuation
       const socVal = vehicle.soc;
       console.log(`🔋 SOC: ${(socVal / 10).toFixed(1)}% (raw: ${socVal})`);
       return `62B046${VehicleSimulator.toHex(socVal, 2)}`;
@@ -290,7 +452,9 @@ function processOBDPID(command) {
     case "B043": // Current
       return `62B043${VehicleSimulator.toHex(vehicle.current, 2)}`;
     case "B056": // Battery temp
-      return `62B056${VehicleSimulator.toHex(vehicle.batteryTemp, 2)}`;
+      const tempVal = vehicle.batteryTemp;
+      console.log(`🌡️  Temp: ${vehicle.getBatteryTempCelsius().toFixed(1)}°C (raw: ${tempVal})`);
+      return `62B056${VehicleSimulator.toHex(tempVal, 2)}`;
     case "B048":
       return "62B0480000";
     case "B101": // Odometer
@@ -299,6 +463,10 @@ function processOBDPID(command) {
       return `62BA00${VehicleSimulator.toHex(vehicle.speed, 2)}`;
     case "BB05": // External temp
       return `62BB05${VehicleSimulator.toHex(vehicle.extTemp, 1)}`;
+    case "DEV0": // DEV-only: Simulated GPS (lat,lon,speed)
+      const gpsData = gpsSimulator.getGPSString();
+      console.log(`📍 GPS: ${gpsData}`);
+      return `62DEV0${gpsData}`;
     default:
       return "NO DATA";
   }
@@ -1019,18 +1187,25 @@ function startConsole() {
       case "drive": {
         const speed = parseInt(args[1]) || 50;
         vehicle.setMode("driving", speed);
+        gpsSimulator.setSpeed(speed);
         break;
       }
       case "charge":
         vehicle.setMode("charging");
+        gpsSimulator.setSpeed(0);
         console.log("🔌 Charging started");
         break;
       case "stop":
         vehicle.setMode("static");
+        gpsSimulator.setSpeed(0);
         console.log("🅿️ Stopped");
         break;
       case "status":
-        console.log(JSON.stringify(vehicle.getSummary(), null, 2));
+        console.log("🚗 Vehicle:", JSON.stringify(vehicle.getSummary(), null, 2));
+        console.log("📍 GPS:", JSON.stringify(gpsSimulator.getSummary(), null, 2));
+        break;
+      case "gps":
+        console.log("📍 GPS:", JSON.stringify(gpsSimulator.getSummary(), null, 2));
         break;
       case "soc": {
         const soc = parseFloat(args[1]);
@@ -1045,6 +1220,7 @@ function startConsole() {
       case "speed": {
         const s = parseInt(args[1]) || 0;
         vehicle.setSpeed(s);
+        gpsSimulator.setSpeed(s);
         break;
       }
       case "help":
@@ -1054,7 +1230,8 @@ Commands:
   speed <kmh>    - Change speed while driving
   charge         - Start charging
   stop           - Stop driving/charging
-  status         - Show vehicle state
+  status         - Show vehicle and GPS state
+  gps            - Show GPS state only
   soc <0-100>    - Set SOC percentage
   help           - Show this help
   exit           - Exit simulator

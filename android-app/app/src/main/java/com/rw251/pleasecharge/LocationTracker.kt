@@ -61,6 +61,7 @@ object LocationTracker {
     private var callback: LocationCallback? = null
     private val lock = Any()
     private var consecutiveFallbacks = 0
+    private var devMode = false  // When true, ignore real GPS and only use injected locations
 
     fun hasPermission(context: Context): Boolean {
         val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -107,10 +108,33 @@ object LocationTracker {
     }
     
     /**
+     * Enable or disable dev mode. When enabled, real GPS updates are ignored.
+     */
+    fun setDevMode(enabled: Boolean, onLog: (String) -> Unit = {}) {
+        if (devMode != enabled) {
+            devMode = enabled
+            onLog(if (enabled) "Dev mode enabled - using simulated GPS" else "Dev mode disabled - using real GPS")
+            if (enabled) {
+                // Clear existing samples when switching to dev mode
+                synchronized(lock) {
+                    samples.clear()
+                    consecutiveFallbacks = 0
+                }
+            }
+        }
+    }
+    
+    /**
      * Inject a simulated GPS location (for dev mode when using BLE simulator).
      * This bypasses the real GPS and directly adds a location sample.
+     * Automatically enables dev mode when called.
      */
     fun injectSimulatedLocation(lat: Double, lon: Double, speedKmh: Double, onLog: (String) -> Unit = {}) {
+        // Auto-enable dev mode when receiving simulated GPS
+        if (!devMode) {
+            setDevMode(true, onLog)
+        }
+        
         val timestamp = System.currentTimeMillis()
         val speedMph = speedKmh * 0.621371 // Convert km/h to mph
         
@@ -137,6 +161,9 @@ object LocationTracker {
     }
 
     private fun handleLocation(location: Location, onLog: (String) -> Unit) {
+        // In dev mode, ignore real GPS updates - only use injected simulated locations
+        if (devMode) return
+        
         val timestamp = if (location.time > 0) location.time else System.currentTimeMillis()
         val lat = location.latitude
         val lon = location.longitude
