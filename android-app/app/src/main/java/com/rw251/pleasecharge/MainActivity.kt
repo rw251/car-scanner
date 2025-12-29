@@ -3,11 +3,13 @@ package com.rw251.pleasecharge
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.annotation.RequiresPermission
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -44,11 +46,26 @@ class MainActivity : AppCompatActivity() {
         if (allGranted) {
             AppLogger.i("All permissions granted")
             viewModel.appendLog("Permissions granted")
+            // Now request background location if needed (Android 10+)
+            maybeRequestBackgroundLocation()
             startLocationTracking()
             startBleManager()
         } else {
             AppLogger.w("Permissions denied: $results")
             viewModel.appendLog("Permissions denied - cannot scan for BLE devices")
+        }
+    }
+    
+    @SuppressLint("MissingPermission")
+    private val backgroundLocationLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            AppLogger.i("Background location permission granted")
+            viewModel.appendLog("Background location enabled - will record when screen is off")
+        } else {
+            AppLogger.w("Background location permission denied")
+            viewModel.appendLog("Background location denied - recording will stop when screen is off")
         }
     }
 
@@ -231,6 +248,7 @@ class MainActivity : AppCompatActivity() {
 
         if (hasAll) {
             AppLogger.i("All permissions already granted")
+            maybeRequestBackgroundLocation()
             startLocationTracking()
             startBleManager()
         } else {
@@ -238,6 +256,34 @@ class MainActivity : AppCompatActivity() {
             viewModel.appendLog("Requesting permissions...")
             permissionLauncher.launch(needed.toTypedArray())
         }
+    }
+    
+    private fun maybeRequestBackgroundLocation() {
+        // Background location is only needed on Android 10+ (API 29+)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
+        
+        // Check if we already have it
+        val hasBackgroundLocation = checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) == 
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        
+        if (hasBackgroundLocation) {
+            AppLogger.i("Background location already granted")
+            return
+        }
+        
+        // Show explanation dialog before requesting
+        AlertDialog.Builder(this)
+            .setTitle("Background Location")
+            .setMessage("To record journey data when the screen is off or you're using Android Auto, " +
+                "please allow location access 'All the time' on the next screen.")
+            .setPositiveButton("Continue") { _, _ ->
+                backgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            }
+            .setNegativeButton("Skip") { _, _ ->
+                AppLogger.i("User skipped background location permission")
+                viewModel.appendLog("Background location skipped - recording may stop when screen is off")
+            }
+            .show()
     }
 
     @RequiresPermission(allOf = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT])

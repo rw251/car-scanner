@@ -6,14 +6,24 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import com.rw251.pleasecharge.ble.BleObdManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
- * Foreground service to keep BLE connection alive when the app is backgrounded
- * or the phone is locked. It reuses the shared BleConnectionManager and keeps
- * the process in the foreground state with a lightweight notification.
+ * Foreground service to keep BLE connection and location tracking alive when the app 
+ * is backgrounded or the phone is locked. It reuses the shared BleConnectionManager 
+ * and LocationTracker, and keeps the process in the foreground state with a 
+ * lightweight notification.
  */
 class BleForegroundService : Service() {
 
@@ -25,6 +35,8 @@ class BleForegroundService : Service() {
     }
 
     private var bleManager: BleObdManager? = null
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var locationJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -34,9 +46,18 @@ class BleForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> startForegroundWithNotification()
-            ACTION_STOP -> stopSelf()
+            ACTION_STOP -> {
+                stopLocationTracking()
+                stopSelf()
+            }
             else -> startForegroundWithNotification()
         }
+
+        // Initialize DataCapture if not already done
+        DataCapture.init(applicationContext)
+        
+        // Start location tracking
+        startLocationTracking()
 
         // Ensure manager exists so BLE can persist
         bleManager = BleConnectionManager.getOrCreateManager(
@@ -44,23 +65,82 @@ class BleForegroundService : Service() {
             listener = object : BleObdManager.Listener {
                 override fun onStatus(text: String) { /* no-op */ }
                 override fun onReady() { /* no-op */ }
-                override fun onSoc(raw: Int, pct93: Double?, pct95: Double?, pct97: Double?, timestamp: Long) { /* no-op */ }
-                override fun onTemp(celsius: Double, timestamp: Long) { /* no-op */ }
+                override fun onSoc(raw: Int, pct93: Double?, pct95: Double?, pct97: Double?, timestamp: Long) {
+                    // Log SOC data even when in background
+                    val pct = pct95 ?: (raw / 9.5)
+                    DataCapture.logSoc(raw, pct, timestamp)
+                }
+                override fun onTemp(celsius: Double, timestamp: Long) {
+                    // Log temp data even when in background
+                    DataCapture.logTemp(celsius, timestamp)
+                }
                 override fun onError(msg: String, ex: Throwable?) { /* no-op */ }
                 override fun onLog(line: String) { /* no-op */ }
                 override fun onStateChanged(state: BleObdManager.State) { /* no-op */ }
             },
-            updateListener = false,
+            updateListener = true, // Update listener to capture data
         )
 
         return START_STICKY
+    }
+    
+    private fun startLocationTracking() {
+        if (locationJob != null) return
+        
+        if (LocationTracker.hasPermission(this)) {
+            LocationTracker.start(applicationContext) { msg ->
+                AppLogger.d(msg, "LocationTracker-Service")
+            }
+            
+            locationJob = serviceScope.launch {
+                LocationTracker.metrics.collect { metrics ->
+                    metrics?.let {
+                        DataCapture.logLocation(
+                            lat = it.lat,
+                            lon = it.lon,
+                            speedMph = it.averageSpeedMph,
+                            distanceMiles = it.distanceMiles,
+                            timestamp = it.timestampMs
+                        )
+                    }
+                }
+            }
+            AppLogger.i("Location tracking started in foreground service")
+        } else {
+            AppLogger.w("Location permission not granted - cannot track in background")
+        }
+    }
+    
+    private fun stopLocationTracking() {
+        locationJob?.cancel()
+        locationJob = null
+        LocationTracker.stop()
+        AppLogger.i("Location tracking stopped in foreground service")
+    }
+    
+    override fun onDestroy() {
+        super.onDestroy()
+        stopLocationTracking()
+        serviceScope.cancel()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun startForegroundWithNotification() {
         val notification = buildNotification()
-        startForeground(NOTIFICATION_ID, notification)
+        
+        // On Android 14+, we need to specify foreground service types
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or 
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
     }
 
     private fun buildNotification(): Notification {
@@ -72,8 +152,8 @@ class BleForegroundService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("PleaseCharge connected")
-            .setContentText("Keeping BLE connection active")
+            .setContentTitle("PleaseCharge active")
+            .setContentText("Recording battery & location data")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
