@@ -10,6 +10,7 @@ import android.os.ParcelUuid
 import androidx.annotation.RequiresPermission
 import androidx.core.content.ContextCompat
 import com.rw251.pleasecharge.AppLogger
+import com.rw251.pleasecharge.LocationTracker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -154,6 +155,7 @@ class BleObdManager(
     /**
      * Request SOC once. Only works when state == READY.
      * Sends 22B046 command and the response will be delivered via onSoc callback.
+     * Also requests GPS from simulator if in dev mode.
      */
     fun requestSoc() {
         if (currentState != State.READY) {
@@ -173,8 +175,19 @@ class BleObdManager(
             if (currentState == State.READY) {
                 send("22B056")
             }
+            // If in dev mode, also request GPS from simulator
+            if (isDevMode && currentState == State.READY) {
+                delay(500)
+                listener.onLog("Requesting simulated GPS (22DEV0)")
+                send("22DEV0")
+            }
         }
     }
+    
+    /**
+     * Check if we're connected to a dev mode device.
+     */
+    fun isDevModeActive(): Boolean = isDevMode
 
     /**
      * Request battery temperature once. Only works when state == READY.
@@ -559,6 +572,13 @@ class BleObdManager(
 
         val header = hex.substring(0, 6)
         val payload = hex.substring(6)
+        
+        // Handle DEV0 GPS response specially (contains lat,lon,speed as text)
+        if (header == "62DEV0") {
+            parseGpsResponse(payload)
+            return
+        }
+        
         if (payload.length < 4) return
 
         val bytes = payload.substring(0, 4)
@@ -593,6 +613,36 @@ class BleObdManager(
                     listener.onTemp(temp, now)
                 }
             }
+        }
+    }
+    
+    /**
+     * Parse GPS response from dev simulator.
+     * Format: "lat,lon,speed" e.g. "53.480800,-2.242600,50.0"
+     */
+    private fun parseGpsResponse(payload: String) {
+        try {
+            // The payload comes as the raw text after "62DEV0"
+            val parts = payload.split(",")
+            if (parts.size >= 3) {
+                val lat = parts[0].toDoubleOrNull()
+                val lon = parts[1].toDoubleOrNull()
+                val speedKmh = parts[2].toDoubleOrNull()
+                
+                if (lat != null && lon != null && speedKmh != null) {
+                    listener.onLog("Simulated GPS: $lat, $lon @ ${speedKmh.toInt()} km/h")
+                    // Inject the simulated GPS into LocationTracker
+                    LocationTracker.injectSimulatedLocation(lat, lon, speedKmh) { msg ->
+                        listener.onLog(msg)
+                    }
+                } else {
+                    listener.onLog("GPS parse failed: invalid numbers in '$payload'")
+                }
+            } else {
+                listener.onLog("GPS parse failed: expected 3 parts, got ${parts.size} in '$payload'")
+            }
+        } catch (e: Exception) {
+            listener.onLog("GPS parse error: ${e.message}")
         }
     }
 

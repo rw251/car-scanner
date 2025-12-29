@@ -105,6 +105,36 @@ object LocationTracker {
             consecutiveFallbacks = 0
         }
     }
+    
+    /**
+     * Inject a simulated GPS location (for dev mode when using BLE simulator).
+     * This bypasses the real GPS and directly adds a location sample.
+     */
+    fun injectSimulatedLocation(lat: Double, lon: Double, speedKmh: Double, onLog: (String) -> Unit = {}) {
+        val timestamp = System.currentTimeMillis()
+        val speedMph = speedKmh * 0.621371 // Convert km/h to mph
+        
+        synchronized(lock) {
+            val prev = samples.lastOrNull()
+            val deltaSec = if (prev != null) max(0.001, (timestamp - prev.timestampMs) / 1000.0) else 0.0
+            val distanceMeters = if (prev != null) haversineMeters(prev.lat, prev.lon, lat, lon) else 0.0
+            
+            samples.add(
+                LocationSample(
+                    lat = lat,
+                    lon = lon,
+                    timestampMs = timestamp,
+                    segmentDistanceMeters = distanceMeters,
+                    segmentSpeedMph = min(speedMph, MAX_SPEED_MPH),
+                    wasFallback = false
+                )
+            )
+            trimSamplesLocked()
+            publishMetricsLocked()
+            
+            onLog("Injected simulated GPS: $lat, $lon @ ${speedKmh.toInt()} km/h")
+        }
+    }
 
     private fun handleLocation(location: Location, onLog: (String) -> Unit) {
         val timestamp = if (location.time > 0) location.time else System.currentTimeMillis()
