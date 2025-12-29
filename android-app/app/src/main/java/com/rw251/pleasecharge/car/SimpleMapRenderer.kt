@@ -3,7 +3,6 @@ package com.rw251.pleasecharge.car
 import android.graphics.*
 import android.util.Log
 import android.view.Surface
-import androidx.car.app.CarContext
 import androidx.car.app.SurfaceCallback
 import androidx.car.app.SurfaceContainer
 import androidx.lifecycle.Lifecycle
@@ -15,7 +14,6 @@ import java.util.Locale
  * Fetches tiles from OSM tile servers and caches them in memory.
  */
 class SimpleMapRenderer(
-    private val carContext: CarContext,
     lifecycle: Lifecycle
 ) {
     
@@ -309,7 +307,7 @@ class SimpleMapRenderer(
         // Draw tiles around the center
         for (dx in -tilesNeededX/2..tilesNeededX/2) {
             for (dy in -tilesNeededY/2..tilesNeededY/2) {
-                val tile = TileCache.TileCoord(
+                val tile = TileCache.TileCoordinate(
                     centerTile.x + dx,
                     centerTile.y + dy,
                     zoomLevel

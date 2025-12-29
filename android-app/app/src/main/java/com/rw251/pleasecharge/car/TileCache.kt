@@ -28,28 +28,18 @@ class TileCache {
     private val pendingRequests = mutableSetOf<String>()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
-    data class TileCoord(val x: Int, val y: Int, val zoom: Int)
+    data class TileCoordinate(val x: Int, val y: Int, val zoom: Int)
     
     /**
+     *
      * Convert lat/lon to tile coordinates at given zoom level
      */
-    fun latLonToTile(lat: Double, lon: Double, zoom: Int): TileCoord {
+    fun latLonToTile(lat: Double, lon: Double, zoom: Int): TileCoordinate {
         val n = 1 shl zoom // 2^zoom
         val x = ((lon + 180.0) / 360.0 * n).toInt().coerceIn(0, n - 1)
         val latRad = Math.toRadians(lat)
         val y = ((1.0 - ln(tan(latRad) + 1.0 / cos(latRad)) / PI) / 2.0 * n).toInt().coerceIn(0, n - 1)
-        return TileCoord(x, y, zoom)
-    }
-    
-    /**
-     * Convert tile coordinates to lat/lon (northwest corner of tile)
-     */
-    fun tileToLatLon(tile: TileCoord): Pair<Double, Double> {
-        val n = 1 shl tile.zoom
-        val lon = tile.x.toDouble() / n * 360.0 - 180.0
-        val latRad = atan(sinh(PI * (1 - 2 * tile.y.toDouble() / n)))
-        val lat = Math.toDegrees(latRad)
-        return Pair(lat, lon)
+        return TileCoordinate(x, y, zoom)
     }
     
     /**
@@ -67,7 +57,7 @@ class TileCache {
      * Get a tile from cache, or start downloading it.
      * Returns null if tile is not yet cached (will be available on next render).
      */
-    fun getTile(tile: TileCoord): Bitmap? {
+    fun getTile(tile: TileCoordinate): Bitmap? {
         val key = "${tile.zoom}/${tile.x}/${tile.y}"
         
         // Check memory cache
@@ -84,7 +74,7 @@ class TileCache {
         return null
     }
     
-    private fun downloadTile(tile: TileCoord, key: String) {
+    private fun downloadTile(tile: TileCoordinate, key: String) {
         scope.launch {
             try {
                 val url = URL("$OSM_TILE_URL/${tile.zoom}/${tile.x}/${tile.y}.png")
@@ -126,14 +116,9 @@ class TileCache {
         val center = latLonToTile(lat, lon, zoom)
         for (dx in -radius..radius) {
             for (dy in -radius..radius) {
-                val tile = TileCoord(center.x + dx, center.y + dy, zoom)
+                val tile = TileCoordinate(center.x + dx, center.y + dy, zoom)
                 getTile(tile) // This will trigger download if not cached
             }
         }
-    }
-    
-    fun clear() {
-        memoryCache.evictAll()
-        scope.cancel()
     }
 }

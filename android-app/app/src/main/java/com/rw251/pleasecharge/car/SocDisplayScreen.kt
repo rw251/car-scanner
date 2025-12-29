@@ -1,15 +1,14 @@
 package com.rw251.pleasecharge.car
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Intent
+import androidx.annotation.RequiresPermission
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
 import androidx.car.app.model.Action
 import androidx.car.app.model.ActionStrip
 import androidx.car.app.model.CarIcon
-import androidx.car.app.model.ItemList
-import androidx.car.app.model.Pane
-import androidx.car.app.model.PaneTemplate
-import androidx.car.app.model.Row
 import androidx.car.app.model.Template
 import androidx.car.app.navigation.model.NavigationTemplate
 import androidx.core.graphics.drawable.IconCompat
@@ -59,6 +58,7 @@ class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMa
         }
     }
 
+    @SuppressLint("MissingPermission")
     override fun onGetTemplate(): Template {
         // Initialize BLE manager if needed to check permissions
         if (bleManager == null) {
@@ -156,6 +156,7 @@ class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMa
         return builder.build()
     }
 
+    @RequiresPermission(allOf = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT])
     private fun connectToBle() {
         if (bleManager == null) {
             listener = createBleListener()
@@ -187,11 +188,6 @@ class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMa
         }
         // Try to request data immediately in case already connected
         bleManager?.requestSoc()
-    }
-
-    @android.annotation.SuppressLint("MissingPermission")
-    private fun disconnectBle() {
-        bleManager?.stop()
     }
 
     private fun createBleListener(): BleObdManager.Listener {
@@ -239,20 +235,12 @@ class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMa
         }
     }
 
-    @android.annotation.SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission")
     override fun onDestroy(owner: LifecycleOwner) {
         super.onDestroy(owner)
         listener?.let { BleConnectionManager.removeListener(it) }
         bleManager?.stop()
         locationJob?.cancel()
-    }
-
-    private fun formatMiles(value: Double?): String {
-        return value?.let { String.format(Locale.getDefault(), "%.2f mi", it) } ?: "--"
-    }
-
-    private fun formatSpeed(value: Double?): String {
-        return value?.let { String.format(Locale.getDefault(), "%.1f mph", it) } ?: "--"
     }
 
     private fun openPhoneApp() {

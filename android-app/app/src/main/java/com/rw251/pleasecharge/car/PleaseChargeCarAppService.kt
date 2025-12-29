@@ -32,7 +32,7 @@ class PleaseChargeSession : Session() {
         // Create mapRenderer here where carContext is guaranteed to be available
         if (mapRenderer == null) {
             android.util.Log.i("PleaseChargeSession", "Creating SimpleMapRenderer")
-            mapRenderer = SimpleMapRenderer(carContext, lifecycle)
+            mapRenderer = SimpleMapRenderer(lifecycle)
         }
         
         // Register the surface callback directly here instead of relying on lifecycle

@@ -62,35 +62,15 @@ object DataCapture {
     }
     
     fun logLocation(lat: Double, lon: Double, speedMph: Double, distanceMiles: Double, timestamp: Long = System.currentTimeMillis()) {
-        enqueue(CsvRow(
-            timestamp = timestamp,
-            speedMph = speedMph,
-            distanceMiles = distanceMiles,
-            lat = lat,
-            lon = lon
-        ))
-    }
-    
-    fun logAll(
-        socRaw: Int? = null,
-        socPct: Double? = null,
-        tempCelsius: Double? = null,
-        speedMph: Double? = null,
-        distanceMiles: Double? = null,
-        lat: Double? = null,
-        lon: Double? = null,
-        timestamp: Long = System.currentTimeMillis()
-    ) {
-        enqueue(CsvRow(
-            timestamp = timestamp,
-            socRaw = socRaw,
-            socPct = socPct,
-            tempCelsius = tempCelsius,
-            speedMph = speedMph,
-            distanceMiles = distanceMiles,
-            lat = lat,
-            lon = lon
-        ))
+        enqueue(
+            CsvRow(
+                timestamp = timestamp,
+                speedMph = speedMph,
+                distanceMiles = distanceMiles,
+                lat = lat,
+                lon = lon
+            )
+        )
     }
     
     private fun enqueue(row: CsvRow) {
@@ -133,22 +113,5 @@ object DataCapture {
     }
     
     fun getCsvFilePath(): String? = csvFile?.absolutePath
-    
-    fun getCsvFileContent(): String {
-        return try {
-            csvFile?.readText() ?: ""
-        } catch (e: Exception) {
-            AppLogger.e("Error reading CSV file", e)
-            "Error reading CSV file: ${e.message}"
-        }
-    }
-    
-    fun clearData() {
-        try {
-            csvFile?.writeText("timestamp,soc_raw,soc_pct,temp_celsius,speed_mph,distance_miles,lat,lon\n")
-            AppLogger.i("CSV data cleared")
-        } catch (e: Exception) {
-            AppLogger.e("Failed to clear CSV data", e)
-        }
-    }
+
 }
