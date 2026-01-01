@@ -80,6 +80,8 @@ class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMa
         
         // Auto-start connection if we have permissions and not connected
         if (bleManager?.hasAllPermissions() == true && bleManager?.getState() == BleObdManager.State.DISCONNECTED) {
+            val currentState = bleManager?.getState()
+            AppLogger.i("SocDisplayScreen: onGetTemplate - Current BLE state is $currentState, starting connection")
             bleManager?.start()
         }
 
@@ -184,6 +186,7 @@ class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMa
         val currentState = bleManager?.getState()
         if (currentState != BleObdManager.State.READY) {
             // Not ready yet, start connection
+            AppLogger.i("SocDisplayScreen: connectToBle -  Current BLE state is $currentState, starting connection")
             bleManager?.start()
         }
         // Try to request data immediately in case already connected

@@ -60,62 +60,85 @@ class BleForegroundService : Service() {
         // Initialize DataCapture if not already done
         DataCapture.init(applicationContext)
         
-        // Start location tracking
+        // START GPS IMMEDIATELY - don't wait for BLE
+        // GPS should be collecting data in parallel with BLE connection attempts
         startLocationTracking()
 
-        // Ensure manager exists so BLE can persist
-        bleManager = BleConnectionManager.getOrCreateManager(
-            context = this,
-            listener = object : BleObdManager.Listener {
-                override fun onStatus(text: String) { /* no-op */ }
-                override fun onReady() { /* no-op */ }
-                override fun onSoc(raw: Int, pct93: Double?, pct95: Double?, pct97: Double?, timestamp: Long) {
-                    // Log SOC data even when in background
-                    val pct = pct95 ?: (raw / 9.5)
-                    DataCapture.logSoc(raw, pct, timestamp)
-                }
-                override fun onTemp(celsius: Double, timestamp: Long) {
-                    // Log temp data even when in background
-                    DataCapture.logTemp(celsius, timestamp)
-                }
-                override fun onError(msg: String, ex: Throwable?) { /* no-op */ }
-                override fun onLog(line: String) { /* no-op */ }
-                override fun onStateChanged(state: BleObdManager.State) { /* no-op */ }
-            },
-            updateListener = true, // Update listener to capture data
-        )
+        // Start BLE in parallel (non-blocking)
+        startBleManagerAsync()
 
         return START_STICKY
     }
     
-    private fun startLocationTracking() {
-        if (locationJob != null) return
-        
-        if (LocationTracker.hasPermission(this)) {
-            LocationTracker.start(applicationContext) { msg ->
-                AppLogger.d(msg, "LocationTracker-Service")
-            }
-            
-            locationJob = serviceScope.launch {
-                LocationTracker.metrics.collect { metrics ->
-                    metrics?.let {
-                        DataCapture.logLocation(
-                            lat = it.lat,
-                            lon = it.lon,
-                            speedMph = it.averageSpeedMph,
-                            distanceMiles = it.distanceMiles,
-                            timestamp = it.timestampMs
-                        )
-                        
-                        // Preload map tiles around current location
-                        maybePreloadTiles(it.lat, it.lon)
+    /**
+     * Start BLE manager asynchronously so it doesn't block location tracking startup.
+     * BLE connection and location tracking should happen in parallel.
+     */
+    private fun startBleManagerAsync() {
+        serviceScope.launch {
+            // Ensure manager exists so BLE can persist
+            val manager = BleConnectionManager.getOrCreateManager(
+                context = this@BleForegroundService,
+                listener = object : BleObdManager.Listener {
+                    override fun onStatus(text: String) { /* no-op */ }
+                    override fun onReady() { /* no-op */ }
+                    override fun onSoc(raw: Int, pct93: Double?, pct95: Double?, pct97: Double?, timestamp: Long) {
+                        // Log SOC data even when in background
+                        val pct = pct95 ?: (raw / 9.5)
+                        DataCapture.logSoc(raw, pct, timestamp)
                     }
+                    override fun onTemp(celsius: Double, timestamp: Long) {
+                        // Log temp data even when in background
+                        DataCapture.logTemp(celsius, timestamp)
+                    }
+                    override fun onError(msg: String, ex: Throwable?) { /* no-op */ }
+                    override fun onLog(line: String) { /* no-op */ }
+                    override fun onStateChanged(state: BleObdManager.State) { /* no-op */ }
+                },
+                updateListener = true, // Update listener to capture data
+            )
+            bleManager = manager
+            AppLogger.i("BleForegroundService: BLE manager initialized asynchronously")
+        }
+    }
+    
+    private fun startLocationTracking() {
+        // Guard: only start once per service instance
+        // if (locationJob != null) {
+        //     AppLogger.d("Location tracking already started in this service instance", "LocationTracker-Service")
+        //     return
+        // }
+        
+        if (!LocationTracker.hasPermission(this)) {
+            AppLogger.w("Location permission not granted - cannot track in background")
+            return
+        }
+        
+        AppLogger.i("BleForegroundService: Starting location tracking")
+        
+        // Start LocationTracker (has its own guard against duplicate starts)
+        LocationTracker.start(applicationContext) { msg ->
+            AppLogger.d(msg, "LocationTracker-Service")
+        }
+        
+        // Collect metrics and log/preload
+        locationJob = serviceScope.launch {
+            LocationTracker.metrics.collect { metrics ->
+                metrics?.let {
+                    DataCapture.logLocation(
+                        lat = it.lat,
+                        lon = it.lon,
+                        speedMph = it.averageSpeedMph,
+                        distanceMiles = it.distanceMiles,
+                        timestamp = it.timestampMs
+                    )
+                    
+                    // Preload map tiles around current location
+                    maybePreloadTiles(it.lat, it.lon)
                 }
             }
-            AppLogger.i("Location tracking started in foreground service")
-        } else {
-            AppLogger.w("Location permission not granted - cannot track in background")
         }
+        AppLogger.i("BleForegroundService: Location tracking job launched")
     }
     
     private fun stopLocationTracking() {

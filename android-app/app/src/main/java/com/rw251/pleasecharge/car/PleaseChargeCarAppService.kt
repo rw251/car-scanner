@@ -5,6 +5,8 @@ import androidx.car.app.CarAppService
 import androidx.car.app.Screen
 import androidx.car.app.Session
 import androidx.car.app.validation.HostValidator
+import com.rw251.pleasecharge.AppLogger
+import com.rw251.pleasecharge.BleForegroundService
 
 /**
  * Android Auto Car App Service
@@ -28,6 +30,11 @@ class PleaseChargeSession : Session() {
     
     override fun onCreateScreen(intent: Intent): Screen {
         android.util.Log.i("PleaseChargeSession", "onCreateScreen called")
+        AppLogger.i("PleaseChargeSession: onCreateScreen called")
+        
+        // Start the foreground service to initialize location tracking and BLE
+        // This ensures GPS works even when only Android Auto is launched (no phone app)
+        startBleForegroundService()
         
         // Create mapRenderer here where carContext is guaranteed to be available
         if (mapRenderer == null) {
@@ -48,5 +55,13 @@ class PleaseChargeSession : Session() {
         }
         
         return SocDisplayScreen(carContext, mapRenderer!!)
+    }
+    
+    private fun startBleForegroundService() {
+        val intent = Intent(carContext, BleForegroundService::class.java).apply {
+            action = BleForegroundService.ACTION_START
+        }
+        carContext.startForegroundService(intent)
+        AppLogger.i("PleaseChargeSession: Started BleForegroundService from Android Auto")
     }
 }

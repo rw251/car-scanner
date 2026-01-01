@@ -98,6 +98,11 @@ class MainActivity : AppCompatActivity() {
         // Hide action bar for full-screen map
         supportActionBar?.hide()
 
+        // Start foreground service EARLY - ensures location tracking starts
+        // regardless of permission state. It will wait for permissions but won't lose time.
+        startBleForegroundService()
+        AppLogger.i("MainActivity: Foreground service started in onCreate")
+
         setupMap()
         setupBottomSheet()
         setupUI()
@@ -371,17 +376,16 @@ class MainActivity : AppCompatActivity() {
     private fun startLocationTracking() {
         if (locationStarted) return
         locationStarted = true
-        AppLogger.i("Starting location tracking")
-        LocationTracker.start(applicationContext) { msg -> 
-            AppLogger.d(msg, "LocationTracker")
-        }
+        AppLogger.i("MainActivity: Ensuring foreground service is started")
+        // Ensure foreground service is started - it will handle LocationTracker.start()
+        startBleForegroundService()
+        
+        // Just subscribe to LocationTracker metrics (service started it)
         if (locationJob == null) {
             locationJob = lifecycleScope.launch {
                 LocationTracker.metrics.collect { metrics ->
                     metrics?.let { 
                         viewModel.setLocationStats(it.totalTripDistanceMiles, it.averageSpeedMph)
-                        // NOTE: DataCapture.logLocation is handled by BleForegroundService
-                        // to avoid duplicate logging - don't log here
                         // Update map with current location
                         runOnUiThread {
                             updateMapLocation(it.lat, it.lon)
@@ -454,6 +458,8 @@ class MainActivity : AppCompatActivity() {
             )
         }
         startBleForegroundService()
+        // log a message
+        AppLogger.i("MainActivity: startBleManager - Starting BLE manager")
         manager?.start()
     }
 
