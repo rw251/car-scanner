@@ -83,7 +83,9 @@ class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMa
             bleManager?.start()
         }
 
-        LocationTracker.start(carContext) { /* Car UI stays quiet; logs handled on phone */ }
+        // NOTE: LocationTracker is started by MainActivity/BleForegroundService which have proper
+        // location permissions. CarContext may not have location permission, so we don't start here.
+        // We just consume the metrics Flow in our init block.
         
         // Update renderer with current stats
         mapRenderer.isPanelExpanded = panelExpanded

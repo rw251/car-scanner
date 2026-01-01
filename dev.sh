@@ -172,11 +172,11 @@ fast_deploy() {
     if [ $? -eq 0 ]; then
         echo "✅ Installation successful!"
         
-        # Force stop and restart the app
+        # Force stop and restart the app (debug package has .debug suffix)
         echo "🔄 Restarting app..."
-        $ADB shell am force-stop com.rw251.pleasecharge
+        $ADB shell am force-stop com.rw251.pleasecharge.debug
         sleep 1
-        $ADB shell am start -n com.rw251.pleasecharge/.MainActivity
+        $ADB shell am start -n com.rw251.pleasecharge.debug/com.rw251.pleasecharge.MainActivity
         
         echo ""
         echo "✅ Fast deploy complete!"
@@ -329,7 +329,7 @@ build_and_deploy() {
             
             echo ""
             echo "🚀 Launching app..."
-            $ADB shell am start -n com.rw251.pleasecharge/.MainActivity
+            $ADB shell am start -n com.rw251.pleasecharge.debug/com.rw251.pleasecharge.MainActivity
 
             echo ""
             echo "📝 Next steps:"
@@ -357,7 +357,8 @@ export_logs() {
     echo "========================================"
     
     # Paths inside app's internal storage
-    local app_pkg="com.rw251.pleasecharge"
+    # Use debug package name since dev.sh works with debug builds
+    local app_pkg="com.rw251.pleasecharge.debug"
     local device_log_path="/data/data/$app_pkg/files/app_log.txt"
     local device_csv_path="/data/data/$app_pkg/files/vehicle_data.csv"
     local device_log_old="/data/data/$app_pkg/files/app_log.txt.old"

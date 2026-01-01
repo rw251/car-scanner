@@ -18,6 +18,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Add .debug suffix to allow debug and release to coexist
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-DEBUG"
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -35,6 +40,7 @@ android {
     }
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
 }
 

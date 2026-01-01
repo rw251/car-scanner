@@ -1,0 +1,4 @@
+<resources>
+    <!-- Debug build uses a different app name so it's distinguishable from production -->
+    <string name="app_name">PleaseCharge DEBUG</string>
+</resources>

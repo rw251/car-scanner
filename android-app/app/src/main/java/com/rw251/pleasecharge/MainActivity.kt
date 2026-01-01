@@ -380,13 +380,8 @@ class MainActivity : AppCompatActivity() {
                 LocationTracker.metrics.collect { metrics ->
                     metrics?.let { 
                         viewModel.setLocationStats(it.totalTripDistanceMiles, it.averageSpeedMph)
-                        DataCapture.logLocation(
-                            lat = it.lat,
-                            lon = it.lon,
-                            speedMph = it.averageSpeedMph,
-                            distanceMiles = it.distanceMiles,
-                            timestamp = it.timestampMs
-                        )
+                        // NOTE: DataCapture.logLocation is handled by BleForegroundService
+                        // to avoid duplicate logging - don't log here
                         // Update map with current location
                         runOnUiThread {
                             updateMapLocation(it.lat, it.lon)
