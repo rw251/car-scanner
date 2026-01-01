@@ -25,6 +25,7 @@ import kotlin.math.sqrt
 /**
  * Shared location tracker that emits distance travelled and average speed over the last 10 seconds.
  * Includes simple outlier filtering to smooth rogue GPS samples.
+ * GPS update frequency increases when the vehicle is moving.
  */
 object LocationTracker {
     private const val MAX_SPEED_MPH = 90.0               // Hard cap, cars in this app should stay <= 80mph
@@ -34,9 +35,16 @@ object LocationTracker {
     private const val METERS_PER_MILE = 1609.344
     private const val STUCK_FILTER_THRESHOLD = 4         // Number of consecutive fallbacks before reset
     private const val GPS_MOVEMENT_THRESHOLD_METERS = 5.0 // Minimum GPS movement to consider valid
+    
+    // GPS update intervals - faster when moving for better tracking
+    private const val GPS_INTERVAL_STATIONARY_MS = 10_000L  // 10 seconds when stationary
+    private const val GPS_INTERVAL_MOVING_MS = 3_000L       // 3 seconds when moving
+    private const val GPS_MIN_INTERVAL_MS = 2_000L          // Minimum 2 seconds between updates
+    private const val MOVING_THRESHOLD_MPH = 5.0            // Consider moving if speed > 5 mph
 
     data class Metrics(
-        val distanceMiles: Double,
+        val distanceMiles: Double,         // Distance in last 10s window (for speed calc)
+        val totalTripDistanceMiles: Double, // Cumulative trip distance
         val averageSpeedMph: Double,
         val timestampMs: Long,
         val lat: Double,
@@ -62,6 +70,10 @@ object LocationTracker {
     private val lock = Any()
     private var consecutiveFallbacks = 0
     private var devMode = false  // When true, ignore real GPS and only use injected locations
+    private var isMoving = false  // Track whether we're currently moving
+    private var savedContext: Context? = null  // Save context for reconfiguring GPS
+    private var savedOnLog: ((String) -> Unit)? = null  // Save log callback
+    private var totalTripDistanceMeters = 0.0  // Cumulative trip distance
 
     fun hasPermission(context: Context): Boolean {
         val hasFine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -71,21 +83,27 @@ object LocationTracker {
 
     @SuppressLint("MissingPermission")
     fun start(context: Context, onLog: (String) -> Unit = {}) {
-        if (callback != null) return
+        if (callback != null) {
+            AppLogger.i("LocationTracker.start() called but already started - ignoring")
+            return
+        }
         if (!hasPermission(context)) {
+            AppLogger.w("Location permission missing - cannot start location tracking")
             onLog("Location permission missing - cannot start location tracking")
             return
         }
+        
+        AppLogger.i("LocationTracker.start() - starting location tracking")
+        savedContext = context.applicationContext
+        savedOnLog = onLog
 
         client = LocationServices.getFusedLocationProviderClient(context.applicationContext)
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 10_000L)
-            .setMinUpdateIntervalMillis(5_000L)
-            .setWaitForAccurateLocation(true)
-            .build()
+        val request = createLocationRequest(isMoving)
 
         val cb = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 val loc = result.lastLocation ?: return
+                AppLogger.i("LocationTracker received location: lat=${loc.latitude}, lon=${loc.longitude}")
                 scope.launch {
                     handleLocation(loc, onLog)
                 }
@@ -93,17 +111,56 @@ object LocationTracker {
         }
         callback = cb
         client?.requestLocationUpdates(request, cb, Looper.getMainLooper())
-        onLog("Location tracking started")
+        AppLogger.i("Location tracking started (stationary mode)")
+        onLog("Location tracking started (stationary mode)")
+    }
+    
+    /**
+     * Create a location request with appropriate interval based on movement state
+     */
+    private fun createLocationRequest(moving: Boolean): LocationRequest {
+        val interval = if (moving) GPS_INTERVAL_MOVING_MS else GPS_INTERVAL_STATIONARY_MS
+        return LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, interval)
+            .setMinUpdateIntervalMillis(GPS_MIN_INTERVAL_MS)
+            .setWaitForAccurateLocation(true)
+            .build()
+    }
+    
+    /**
+     * Update GPS frequency based on current movement state
+     */
+    @SuppressLint("MissingPermission")
+    private fun updateGpsFrequency(moving: Boolean) {
+        if (isMoving == moving) return  // No change needed
+        isMoving = moving
+        
+        val ctx = savedContext ?: return
+        val cb = callback ?: return
+        val onLog = savedOnLog ?: {}
+        
+        // Remove old updates and start new ones with updated frequency
+        try {
+            client?.removeLocationUpdates(cb)
+            val request = createLocationRequest(moving)
+            client?.requestLocationUpdates(request, cb, Looper.getMainLooper())
+            onLog("GPS frequency updated: ${if (moving) "moving (3s)" else "stationary (10s)"}")
+        } catch (e: Exception) {
+            onLog("Failed to update GPS frequency: ${e.message}")
+        }
     }
 
     fun stop() {
         callback?.let { cb -> client?.removeLocationUpdates(cb) }
         callback = null
         client = null
+        savedContext = null
+        savedOnLog = null
+        isMoving = false
         synchronized(lock) {
             samples.clear()
             _metrics.value = null
             consecutiveFallbacks = 0
+            totalTripDistanceMeters = 0.0  // Reset trip distance when stopping
         }
     }
     
@@ -153,6 +210,10 @@ object LocationTracker {
                     wasFallback = false
                 )
             )
+            
+            // Add to cumulative trip distance
+            totalTripDistanceMeters += distanceMeters
+            
             trimSamplesLocked()
             publishMetricsLocked()
             
@@ -222,6 +283,10 @@ object LocationTracker {
                     wasFallback = wasFallback
                 )
             )
+            
+            // Add to cumulative trip distance
+            totalTripDistanceMeters += distanceMeters
+            
             trimSamplesLocked()
             publishMetricsLocked()
         }
@@ -261,14 +326,25 @@ object LocationTracker {
         val durationSec = max(1.0, (windowSamples.last().timestampMs - windowSamples.first().timestampMs) / 1000.0)
         val avgSpeedMps = distanceMeters / durationSec
         val avgMph = mpsToMph(avgSpeedMps)
+        
+        // Update GPS frequency based on current speed (not inside synchronized block)
+        val nowMoving = avgMph > MOVING_THRESHOLD_MPH
+        if (nowMoving != isMoving) {
+            scope.launch(Dispatchers.Main) {
+                updateGpsFrequency(nowMoving)
+            }
+        }
 
         _metrics.value = Metrics(
             distanceMiles = distanceMeters / METERS_PER_MILE,
+            totalTripDistanceMiles = totalTripDistanceMeters / METERS_PER_MILE,
             averageSpeedMph = min(avgMph, MAX_SPEED_MPH),
             timestampMs = latestTs,
             lat = windowSamples.last().lat,
             lon = windowSamples.last().lon
         )
+        AppLogger.i("LocationTracker metrics updated: lat=${windowSamples.last().lat}, lon=${windowSamples.last().lon}, " +
+            "speed=${avgMph}, samples=${windowSamples.size}")
     }
 
     private fun haversineMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {

@@ -42,6 +42,7 @@ class MainActivity : AppCompatActivity() {
 
     private var manager: BleObdManager? = null
     private var locationJob: Job? = null
+    private var durationJob: Job? = null
     private var locationStarted = false
     private var locationMarker: Marker? = null
     private lateinit var bottomSheetBehavior: BottomSheetBehavior<View>
@@ -101,7 +102,7 @@ class MainActivity : AppCompatActivity() {
         setupBottomSheet()
         setupUI()
         observeViewModel()
-        maybeStartLocationTracking()
+        // ensurePermissionsAndStart() is called in setupUI(), so no need for duplicate maybeStartLocationTracking()
     }
     
     private fun setupMap() {
@@ -113,14 +114,47 @@ class MainActivity : AppCompatActivity() {
             // Disable scrolling and zooming
             setScrollableAreaLimitDouble(null)
             isFlingEnabled = false
+            // Disable horizontal and vertical scroll (prevents drag/pan)
+            isHorizontalMapRepetitionEnabled = false
+            isVerticalMapRepetitionEnabled = false
             controller.setZoom(17.0)
             // Default to UK center initially
             controller.setCenter(GeoPoint(54.0, -2.0))
+            
+            // Override touch events to completely disable map interaction
+            // but still allow touches to pass through to the bottom sheet
+            overlays.add(0, object : org.osmdroid.views.overlay.Overlay() {
+                override fun onDoubleTap(
+                    e: android.view.MotionEvent?,
+                    pMapView: org.osmdroid.views.MapView?
+                ): Boolean {
+                    // Consume double-tap to prevent zoom
+                    return true
+                }
+                
+                override fun onScroll(
+                    pEvent1: android.view.MotionEvent?,
+                    pEvent2: android.view.MotionEvent?,
+                    pDistanceX: Float,
+                    pDistanceY: Float,
+                    pMapView: org.osmdroid.views.MapView?
+                ): Boolean {
+                    // Consume scroll to prevent pan
+                    return true
+                }
+                
+                override fun onFling(
+                    pEvent1: android.view.MotionEvent?,
+                    pEvent2: android.view.MotionEvent?,
+                    pVelocityX: Float,
+                    pVelocityY: Float,
+                    pMapView: org.osmdroid.views.MapView?
+                ): Boolean {
+                    // Consume fling to prevent pan
+                    return true
+                }
+            })
         }
-        
-        // Note: We don't block touch events on the map
-        // The disabled zoom/scroll controls are enough to prevent map interaction
-        // This allows the bottom sheet to still receive swipe gestures
         
         // Create location marker
         locationMarker = Marker(binding.mapView).apply {
@@ -129,10 +163,6 @@ class MainActivity : AppCompatActivity() {
             title = "Current Location"
         }
         binding.mapView.overlays.add(locationMarker)
-        
-        // Note: We don't block touch events on the map anymore
-        // The disabled zoom/scroll controls are enough to prevent map interaction
-        // This allows the bottom sheet to still receive swipe gestures
     }
     
     private fun setupBottomSheet() {
@@ -185,28 +215,6 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("MissingPermission")
     private fun setupUI() {
-        // Connection overlay button - handles both Connect and Cancel
-        binding.connectButton.setOnClickListener {
-            val currentState = viewModel.state.value
-            when (currentState) {
-                BleObdManager.State.DISCONNECTED -> {
-                    ensurePermissionsAndStart()
-                }
-                BleObdManager.State.SCANNING,
-                BleObdManager.State.CONNECTING,
-                BleObdManager.State.DISCOVERING,
-                BleObdManager.State.CONFIGURING -> {
-                    // Cancel the connection
-                    manager?.cancel()
-                    stopBleForegroundService()
-                }
-                BleObdManager.State.READY -> {
-                    // Already connected, hide overlay
-                    binding.connectionOverlay.visibility = View.GONE
-                }
-            }
-        }
-
         // Bottom sheet buttons
         binding.viewLogsButton.setOnClickListener {
             startActivity(Intent(this, LogViewerActivity::class.java))
@@ -216,8 +224,8 @@ class MainActivity : AppCompatActivity() {
             exportDataFiles()
         }
         
-        // Initially show connection overlay
-        updateConnectionOverlay(BleObdManager.State.DISCONNECTED)
+        // Auto-start connection - check permissions first
+        ensurePermissionsAndStart()
     }
 
     @SuppressLint("SetTextI18n")
@@ -250,33 +258,30 @@ class MainActivity : AppCompatActivity() {
         when (state) {
             BleObdManager.State.DISCONNECTED -> {
                 binding.connectionOverlay.visibility = View.VISIBLE
-                binding.connectionStatus.text = "Not Connected"
-                binding.connectButton.text = "Connect to OBD"
-                binding.connectButton.isEnabled = true
+                binding.connectionStatus.text = "Connecting..."
+                binding.connectButton.visibility = View.GONE
             }
             BleObdManager.State.SCANNING -> {
                 binding.connectionOverlay.visibility = View.VISIBLE
-                binding.connectionStatus.text = "Scanning..."
-                binding.connectButton.text = "Cancel"
-                binding.connectButton.isEnabled = true
+                binding.connectionStatus.text = "Scanning for OBD device..."
+                binding.connectButton.visibility = View.GONE
             }
             BleObdManager.State.CONNECTING -> {
                 binding.connectionOverlay.visibility = View.VISIBLE
                 binding.connectionStatus.text = "Connecting..."
-                binding.connectButton.text = "Cancel"
-                binding.connectButton.isEnabled = true
+                binding.connectButton.visibility = View.GONE
             }
             BleObdManager.State.DISCOVERING,
             BleObdManager.State.CONFIGURING -> {
                 binding.connectionOverlay.visibility = View.VISIBLE
                 binding.connectionStatus.text = "Configuring..."
-                binding.connectButton.text = "Cancel"
-                binding.connectButton.isEnabled = true
+                binding.connectButton.visibility = View.GONE
             }
             BleObdManager.State.READY -> {
                 binding.connectionOverlay.visibility = View.GONE
                 if (journeyStartTime == null) {
                     journeyStartTime = System.currentTimeMillis()
+                    startDurationTimer()
                 }
             }
         }
@@ -317,16 +322,34 @@ class MainActivity : AppCompatActivity() {
         binding.distanceValue.text = dist?.let { 
             String.format(Locale.getDefault(), "%.1f", it) 
         } ?: "0.0"
-        
-        // Update duration
+    }
+    
+    @SuppressLint("SetTextI18n")
+    private fun updateDurationDisplay() {
         journeyStartTime?.let { start ->
             val durationMs = System.currentTimeMillis() - start
-            val minutes = (durationMs / 60000).toInt()
+            val hours = (durationMs / 3600000).toInt()
+            val minutes = ((durationMs % 3600000) / 60000).toInt()
             val seconds = ((durationMs % 60000) / 1000).toInt()
-            binding.durationValue.text = String.format(Locale.getDefault(), "%d:%02d", minutes, seconds)
+            binding.durationValue.text = String.format(Locale.getDefault(), "%d:%02d:%02d", hours, minutes, seconds)
         } ?: run {
-            binding.durationValue.text = "0:00"
+            binding.durationValue.text = "0:00:00"
         }
+    }
+    
+    private fun startDurationTimer() {
+        if (durationJob != null) return
+        durationJob = lifecycleScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(1000)  // Update every second
+                updateDurationDisplay()
+            }
+        }
+    }
+    
+    private fun stopDurationTimer() {
+        durationJob?.cancel()
+        durationJob = null
     }
     
     private fun updateMapLocation(lat: Double, lon: Double) {
@@ -356,7 +379,7 @@ class MainActivity : AppCompatActivity() {
             locationJob = lifecycleScope.launch {
                 LocationTracker.metrics.collect { metrics ->
                     metrics?.let { 
-                        viewModel.setLocationStats(it.distanceMiles, it.averageSpeedMph)
+                        viewModel.setLocationStats(it.totalTripDistanceMiles, it.averageSpeedMph)
                         DataCapture.logLocation(
                             lat = it.lat,
                             lon = it.lon,
@@ -512,6 +535,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         AppLogger.i("MainActivity destroyed")
         locationJob?.cancel()
+        stopDurationTimer()
         LocationTracker.stop()
         super.onDestroy()
     }

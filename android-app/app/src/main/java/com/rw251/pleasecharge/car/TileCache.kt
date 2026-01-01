@@ -12,17 +12,22 @@ import kotlin.math.*
 /**
  * Manages downloading and caching of OpenStreetMap tiles.
  * Uses standard OSM tile URL format: https://tile.openstreetmap.org/{z}/{x}/{y}.png
+ * 
+ * This is a singleton so tiles are shared between Android Auto and background service.
  */
-class TileCache {
-    companion object {
-        private const val TAG = "TileCache"
-        private const val TILE_SIZE = 256
-        private const val OSM_TILE_URL = "https://tile.openstreetmap.org"
-        private const val USER_AGENT = "PleaseCharge/1.0 (Android Auto EV App)"
-        
-        // Cache up to 50 tiles in memory (~12MB at 256x256 ARGB_8888)
-        private const val CACHE_SIZE = 50
-    }
+object TileCache {
+    private const val TAG = "TileCache"
+    private const val TILE_SIZE = 256
+    private const val OSM_TILE_URL = "https://tile.openstreetmap.org"
+    private const val USER_AGENT = "PleaseCharge/1.0 (Android Auto EV App)"
+    
+    // Cache up to 100 tiles in memory (~25MB at 256x256 ARGB_8888)
+    private const val CACHE_SIZE = 100
+    
+    // Preload radius in km for background preloading
+    private const val PRELOAD_RADIUS_KM = 5.0
+    // Zoom level for preloading (17 is street level)
+    private const val PRELOAD_ZOOM = 17
     
     private val memoryCache = LruCache<String, Bitmap>(CACHE_SIZE)
     private val pendingRequests = mutableSetOf<String>()
@@ -120,5 +125,41 @@ class TileCache {
                 getTile(tile) // This will trigger download if not cached
             }
         }
+    }
+    
+    /**
+     * Background preload tiles in a radius (in km) around a location.
+     * Uses a lower priority and downloads tiles at the configured zoom level.
+     * This is intended to be called from a background service.
+     */
+    fun backgroundPreload(lat: Double, lon: Double, radiusKm: Double = PRELOAD_RADIUS_KM) {
+        // Calculate how many tiles we need at the given zoom level
+        // At zoom 17, one tile is roughly 0.6km x 0.6km
+        // At zoom 16, one tile is roughly 1.2km x 1.2km
+        val tilesPerKm = 1.7 // Approximate tiles per km at zoom 17
+        val tileRadius = ceil(radiusKm * tilesPerKm).toInt().coerceIn(1, 10)
+        
+        Log.d(TAG, "Background preloading ${(2*tileRadius+1)*(2*tileRadius+1)} tiles around $lat,$lon (radius ${tileRadius} tiles)")
+        
+        val center = latLonToTile(lat, lon, PRELOAD_ZOOM)
+        
+        // Preload in a spiral pattern from center outward
+        for (r in 0..tileRadius) {
+            for (dx in -r..r) {
+                for (dy in -r..r) {
+                    if (abs(dx) == r || abs(dy) == r) { // Only the outer ring at this radius
+                        val tile = TileCoordinate(center.x + dx, center.y + dy, PRELOAD_ZOOM)
+                        getTile(tile)
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Get cache statistics for logging
+     */
+    fun getCacheStats(): String {
+        return "TileCache: ${memoryCache.size()}/${CACHE_SIZE} tiles, ${pendingRequests.size} pending"
     }
 }

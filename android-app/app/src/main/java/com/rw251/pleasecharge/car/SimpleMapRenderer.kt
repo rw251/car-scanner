@@ -27,7 +27,8 @@ class SimpleMapRenderer(
     private var visibleArea: Rect? = null
     private var stableArea: Rect? = null
     
-    private val tileCache = TileCache()
+    // Use the singleton TileCache so tiles are shared with background service
+    private val tileCache = TileCache
     
     private val backgroundPaint = Paint().apply {
         color = "#E8E8E8".toColorInt()

@@ -79,8 +79,11 @@ class BleObdManager(
     private var displayStatus = "DISCONNECTED"  // Only update on major state changes
     private var reconnectJob: Job? = null
     private var reconnectAttempts = 0
-    private val maxReconnectAttempts = 1  // Single retry per plan
+    private val maxReconnectAttempts = Int.MAX_VALUE  // Keep trying forever
+    private val baseBackoffMs = 1000L  // Start with 1 second
+    private val maxBackoffMs = 30000L  // Cap at 30 seconds
     private var pollingJob: Job? = null
+    private var userCancelled = false  // Track if user explicitly cancelled
 
     private var currentState: State = State.DISCONNECTED
         set(value) {
@@ -116,6 +119,7 @@ class BleObdManager(
         AppLogger.i("Starting BLE scan")
         stop() // clean slate
         reconnectAttempts = 0
+        userCancelled = false  // User initiated connection, enable auto-reconnect
         currentState = State.SCANNING
         updateDisplayStatus("SCANNING")
         listener.onLog("Start scan for $TARGET_NAME (or DEV variant) or service $SERVICE_MAIN")
@@ -138,9 +142,11 @@ class BleObdManager(
 
     /**
      * Cancel current connection or scan without scheduling reconnect.
+     * Also prevents auto-reconnect until start() is called again.
      */
     @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     fun cancel() {
+        userCancelled = true  // Prevent auto-reconnect
         stopScanSafe()
         reconnectJob?.cancel()
         reconnectJob = null
@@ -149,7 +155,7 @@ class BleObdManager(
         resetInternalState()
         currentState = State.DISCONNECTED
         updateDisplayStatus("DISCONNECTED")
-        listener.onLog("Cancelled")
+        listener.onLog("Cancelled by user")
     }
 
     /**
@@ -648,27 +654,29 @@ class BleObdManager(
 
     @SuppressLint("MissingPermission")
     private fun scheduleReconnect() {
-        if (reconnectAttempts >= maxReconnectAttempts) {
+        // Don't reconnect if user explicitly cancelled
+        if (userCancelled) {
             stopSocPolling()
             updateDisplayStatus("DISCONNECTED")
-            listener.onLog("Max reconnect attempts reached")
+            listener.onLog("Auto-reconnect disabled (user cancelled)")
             currentState = State.DISCONNECTED
             return
         }
         
         reconnectJob?.cancel()
         reconnectJob = scope.launch(Dispatchers.IO) {
-            val backoffMs = 300L * (reconnectAttempts + 1)
+            // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (capped)
+            val backoffMs = minOf(baseBackoffMs * (1L shl minOf(reconnectAttempts, 5)), maxBackoffMs)
             reconnectAttempts++
-            listener.onLog("Scheduling reconnect in ${backoffMs}ms (attempt $reconnectAttempts)")
+            listener.onLog("Reconnecting in ${backoffMs/1000}s (attempt $reconnectAttempts)")
             delay(backoffMs)
             
-            if (hasAllPermissions()) {
+            if (hasAllPermissions() && !userCancelled) {
                 resetInternalState()
                 currentState = State.SCANNING
                 updateDisplayStatus("SCANNING")
                 startScan()
-            } else {
+            } else if (!hasAllPermissions()) {
                 listener.onError("Missing permissions for reconnect")
                 currentState = State.DISCONNECTED
             }

@@ -12,6 +12,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.rw251.pleasecharge.ble.BleObdManager
+import com.rw251.pleasecharge.car.TileCache
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,6 +38,9 @@ class BleForegroundService : Service() {
     private var bleManager: BleObdManager? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var locationJob: Job? = null
+    private var lastPreloadLat: Double? = null
+    private var lastPreloadLon: Double? = null
+    private val PRELOAD_THRESHOLD_KM = 1.0  // Preload when moved 1km from last preload location
 
     override fun onCreate() {
         super.onCreate()
@@ -102,6 +106,9 @@ class BleForegroundService : Service() {
                             distanceMiles = it.distanceMiles,
                             timestamp = it.timestampMs
                         )
+                        
+                        // Preload map tiles around current location
+                        maybePreloadTiles(it.lat, it.lon)
                     }
                 }
             }
@@ -116,6 +123,44 @@ class BleForegroundService : Service() {
         locationJob = null
         LocationTracker.stop()
         AppLogger.i("Location tracking stopped in foreground service")
+    }
+    
+    /**
+     * Preload map tiles around the current location if we've moved significantly.
+     * Uses a simple distance check to avoid excessive preloading.
+     */
+    private fun maybePreloadTiles(lat: Double, lon: Double) {
+        val lastLat = lastPreloadLat
+        val lastLon = lastPreloadLon
+        
+        // Calculate distance from last preload location
+        val shouldPreload = if (lastLat == null || lastLon == null) {
+            true  // First location, always preload
+        } else {
+            val distanceKm = haversineKm(lastLat, lastLon, lat, lon)
+            distanceKm >= PRELOAD_THRESHOLD_KM
+        }
+        
+        if (shouldPreload) {
+            lastPreloadLat = lat
+            lastPreloadLon = lon
+            TileCache.backgroundPreload(lat, lon)
+            AppLogger.d("Preloading tiles around $lat, $lon - ${TileCache.getCacheStats()}", "TileCache")
+        }
+    }
+    
+    /**
+     * Calculate distance between two points in km using Haversine formula
+     */
+    private fun haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val R = 6371.0  // Earth radius in km
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
+                kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) *
+                kotlin.math.sin(dLon / 2) * kotlin.math.sin(dLon / 2)
+        val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+        return R * c
     }
     
     override fun onDestroy() {

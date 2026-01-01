@@ -15,6 +15,7 @@ import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import com.rw251.pleasecharge.AppLogger
 import com.rw251.pleasecharge.BleConnectionManager
 import com.rw251.pleasecharge.LocationTracker
 import com.rw251.pleasecharge.MainActivity
@@ -46,10 +47,12 @@ class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMa
 
     init {
         lifecycle.addObserver(this)
+        AppLogger.i("SocDisplayScreen init - starting location metrics collection")
         locationJob = lifecycleScope.launch {
             LocationTracker.metrics.collect { metrics ->
                 metrics?.let {
-                    distanceMiles = it.distanceMiles
+                    AppLogger.i("SocDisplayScreen received metrics: lat=${it.lat}, lon=${it.lon}")
+                    distanceMiles = it.totalTripDistanceMiles
                     avgSpeedMph = it.averageSpeedMph
                     mapRenderer.updateLocation(it.lat, it.lon)
                     invalidate()
@@ -73,6 +76,11 @@ class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMa
         if (bleManager?.hasAllPermissions() == false && !permissionsMissing) {
             permissionsMissing = true
             lastError = "Permissions needed - open phone app to grant access"
+        }
+        
+        // Auto-start connection if we have permissions and not connected
+        if (bleManager?.hasAllPermissions() == true && bleManager?.getState() == BleObdManager.State.DISCONNECTED) {
+            bleManager?.start()
         }
 
         LocationTracker.start(carContext) { /* Car UI stays quiet; logs handled on phone */ }
@@ -125,23 +133,13 @@ class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMa
             builder.setMapActionStrip(mapActionStrip)
         }
         
-        // NavigationTemplate requires an action strip - use Connect button when disconnected
+        // NavigationTemplate requires an action strip
         val actionStrip = if (permissionsMissing) {
             ActionStrip.Builder()
                 .addAction(
                     Action.Builder()
                         .setTitle("Open Phone")
                         .setOnClickListener { openPhoneApp() }
-                        .build()
-                )
-                .build()
-        } else if (!isConnected) {
-            // Show Connect button when not connected
-            ActionStrip.Builder()
-                .addAction(
-                    Action.Builder()
-                        .setTitle("Connect")
-                        .setOnClickListener { connectToBle() }
                         .build()
                 )
                 .build()
