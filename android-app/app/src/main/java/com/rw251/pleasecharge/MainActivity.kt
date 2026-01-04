@@ -239,7 +239,6 @@ class MainActivity : AppCompatActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch {
                     viewModel.state.collect { state ->
-                        updateConnectionOverlay(state)
                         updateBleStatus(state)
                     }
                 }
@@ -255,45 +254,71 @@ class MainActivity : AppCompatActivity() {
                         updateSpeedDisplay()
                     }
                 }
-            }
-        }
-    }
-    
-    private fun updateConnectionOverlay(state: BleObdManager.State) {
-        when (state) {
-            BleObdManager.State.DISCONNECTED -> {
-                binding.connectionOverlay.visibility = View.VISIBLE
-                binding.connectionStatus.text = "Connecting..."
-                binding.connectButton.visibility = View.GONE
-            }
-            BleObdManager.State.SCANNING -> {
-                binding.connectionOverlay.visibility = View.VISIBLE
-                binding.connectionStatus.text = "Scanning for OBD device..."
-                binding.connectButton.visibility = View.GONE
-            }
-            BleObdManager.State.CONNECTING -> {
-                binding.connectionOverlay.visibility = View.VISIBLE
-                binding.connectionStatus.text = "Connecting..."
-                binding.connectButton.visibility = View.GONE
-            }
-            BleObdManager.State.DISCOVERING,
-            BleObdManager.State.CONFIGURING -> {
-                binding.connectionOverlay.visibility = View.VISIBLE
-                binding.connectionStatus.text = "Configuring..."
-                binding.connectButton.visibility = View.GONE
-            }
-            BleObdManager.State.READY -> {
-                binding.connectionOverlay.visibility = View.GONE
-                if (journeyStartTime == null) {
-                    journeyStartTime = System.currentTimeMillis()
-                    startDurationTimer()
+                launch {
+                    viewModel.gpsStatus.collect { status ->
+                        binding.topGpsStatus.text = status
+                    }
+                }
+                launch {
+                    viewModel.serviceTimeoutSeconds.collect { seconds ->
+                        if (seconds != null && seconds > 0) {
+                            binding.topTimeoutCountdown.visibility = View.VISIBLE
+                            val minutes = seconds / 60
+                            val secs = seconds % 60
+                            binding.topTimeoutCountdown.text = "Service auto-stop in: ${minutes}m ${secs}s"
+                        } else {
+                            binding.topTimeoutCountdown.visibility = View.GONE
+                        }
+                    }
+                }
+                launch {
+                    ServiceStatus.timeoutSecondsRemaining.collect { seconds ->
+                        viewModel.setServiceTimeoutSeconds(seconds)
+                    }
+                }
+                launch {
+                    ServiceStatus.isServiceRunning.collect { isRunning ->
+                        if (!isRunning) {
+                            // Service has stopped - update UI
+                            binding.topBleStatus.text = "Disconnected - please reopen app to start again"
+                            binding.topBleStatus.setTextColor(android.graphics.Color.parseColor("#F44336"))
+                            binding.topTimeoutCountdown.visibility = View.GONE
+                            binding.topGpsStatus.text = "GPS: Offline"
+                            binding.topGpsStatus.setTextColor(android.graphics.Color.parseColor("#F44336"))
+                        }
+                    }
                 }
             }
         }
     }
     
     private fun updateBleStatus(state: BleObdManager.State) {
-        binding.bleStatus.text = "BLE: ${state.name.lowercase().replaceFirstChar { it.uppercase() }}"
+       
+        // Update top panel BLE status
+        val topStatusText = when (state) {
+            BleObdManager.State.DISCONNECTED -> "OBD: Disconnected"
+            BleObdManager.State.SCANNING -> "Scanning for OBD device..."
+            BleObdManager.State.CONNECTING -> "Connecting to OBD..."
+            BleObdManager.State.DISCOVERING -> "Discovering services..."
+            BleObdManager.State.CONFIGURING -> "Configuring OBD adapter..."
+            BleObdManager.State.READY -> "OBD: Connected ✓"
+        }
+        binding.topBleStatus.text = topStatusText
+        
+        // Color coding
+        val color = when (state) {
+            BleObdManager.State.READY -> android.graphics.Color.parseColor("#4CAF50")
+            BleObdManager.State.DISCONNECTED -> android.graphics.Color.parseColor("#F44336")
+            else -> android.graphics.Color.parseColor("#2196F3")
+        }
+        binding.topBleStatus.setTextColor(color)
+
+        if (state == BleObdManager.State.READY) {
+            if (journeyStartTime == null) {
+                journeyStartTime = System.currentTimeMillis()
+                startDurationTimer()
+            }
+        }
     }
     
     @SuppressLint("SetTextI18n")
@@ -390,6 +415,9 @@ class MainActivity : AppCompatActivity() {
                         runOnUiThread {
                             updateMapLocation(it.lat, it.lon)
                         }
+                        // Update GPS status in top panel
+                        val gpsStatus = "GPS: %.5f, %.5f".format(it.lat, it.lon)
+                        viewModel.setGpsStatus(gpsStatus)
                     }
                 }
             }
@@ -479,7 +507,7 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     val pct = pct95 ?: (raw / 9.5)
                     AppLogger.i("SOC received: raw=$raw, pct=$pct")
-                    DataCapture.logSoc(raw, pct, timestamp)
+                    // DataCapture logging is done by BleForegroundService only (avoid duplicates)
                     viewModel.setSoc(
                         display = "SOC: ${String.format(Locale.getDefault(), "%.1f", pct)}% (raw: $raw)",
                         time = "Time: ${nowString()}"
@@ -492,7 +520,7 @@ class MainActivity : AppCompatActivity() {
             override fun onTemp(celsius: Double, timestamp: Long) {
                 runOnUiThread {
                     AppLogger.i("Temperature received: $celsius°C")
-                    DataCapture.logTemp(celsius, timestamp)
+                    // DataCapture logging is done by BleForegroundService only (avoid duplicates)
                     // Update the map UI temp display
                     updateTempDisplay(celsius)
                 }

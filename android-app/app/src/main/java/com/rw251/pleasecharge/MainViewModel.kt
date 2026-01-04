@@ -40,6 +40,12 @@ class MainViewModel : ViewModel() {
     private val _avgSpeedMph = MutableStateFlow<Double?>(null)
     val avgSpeedMph: StateFlow<Double?> = _avgSpeedMph.asStateFlow()
 
+    private val _gpsStatus = MutableStateFlow("GPS: Searching...")
+    val gpsStatus: StateFlow<String> = _gpsStatus.asStateFlow()
+
+    private val _serviceTimeoutSeconds = MutableStateFlow<Long?>(null)
+    val serviceTimeoutSeconds: StateFlow<Long?> = _serviceTimeoutSeconds.asStateFlow()
+
     fun setStatus(text: String) {
         _status.value = text
     }
@@ -71,5 +77,13 @@ class MainViewModel : ViewModel() {
     fun setLocationStats(distanceMiles: Double, avgSpeedMph: Double) {
         _distanceMiles.value = distanceMiles
         _avgSpeedMph.value = avgSpeedMph
+    }
+
+    fun setGpsStatus(status: String) {
+        _gpsStatus.value = status
+    }
+
+    fun setServiceTimeoutSeconds(seconds: Long?) {
+        _serviceTimeoutSeconds.value = seconds
     }
 }

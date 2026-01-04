@@ -13,6 +13,55 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <!-- Top Status Panel -->
+    <LinearLayout
+        android:id="@+id/topStatusPanel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:orientation="vertical"
+        android:background="@drawable/bottom_sheet_background"
+        android:paddingTop="48dp"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="16dp"
+        android:elevation="8dp">
+
+        <!-- BLE Status -->
+        <TextView
+            android:id="@+id/topBleStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Scanning for OBD device..."
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="#2196F3"
+            android:gravity="center"
+            android:layout_marginBottom="8dp" />
+
+        <!-- GPS Status -->
+        <TextView
+            android:id="@+id/topGpsStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="GPS: Searching..."
+            android:textSize="14sp"
+            android:textColor="#666666"
+            android:gravity="center"
+            android:layout_marginBottom="8dp" />
+
+        <!-- Service Timeout Countdown -->
+        <TextView
+            android:id="@+id/topTimeoutCountdown"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Service timeout: --"
+            android:textSize="12sp"
+            android:textColor="#FF9800"
+            android:gravity="center"
+            android:visibility="gone" />
+    </LinearLayout>
+
     <!-- Connection Status Overlay (shown when not connected) -->
     <LinearLayout
         android:id="@+id/connectionOverlay"
@@ -25,22 +74,6 @@
         android:background="@drawable/rounded_panel_background"
         android:visibility="gone">
 
-        <TextView
-            android:id="@+id/connectionStatus"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Not Connected"
-            android:textSize="18sp"
-            android:textColor="#666666"
-            android:gravity="center" />
-
-        <Button
-            android:id="@+id/connectButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
-            android:text="Connect to OBD"
-            android:backgroundTint="#2196F3" />
     </LinearLayout>
 
     <!-- Bottom Sheet Panel -->
@@ -244,17 +277,6 @@
                         android:textColor="#666666" />
                 </LinearLayout>
             </LinearLayout>
-
-            <!-- BLE Status -->
-            <TextView
-                android:id="@+id/bleStatus"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="BLE: Disconnected"
-                android:textSize="14sp"
-                android:textColor="#666666"
-                android:gravity="center"
-                android:layout_marginBottom="16dp" />
 
             <!-- Action Buttons -->
             <LinearLayout
