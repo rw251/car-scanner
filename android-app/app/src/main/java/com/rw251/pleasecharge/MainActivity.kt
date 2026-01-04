@@ -3,8 +3,6 @@ package com.rw251.pleasecharge
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
-import android.graphics.drawable.Drawable
-import android.os.Build
 import android.os.Bundle
 import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,10 +22,13 @@ import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
+import org.osmdroid.views.CustomZoomButtonsController
 import org.osmdroid.views.overlay.Marker
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.core.graphics.toColorInt
+import kotlinx.coroutines.isActive
 
 /**
  * Full-screen map activity with collapsible stats overlay.
@@ -43,7 +44,6 @@ class MainActivity : AppCompatActivity() {
     private var manager: BleObdManager? = null
     private var locationJob: Job? = null
     private var durationJob: Job? = null
-    private var locationStarted = false
     private var locationMarker: Marker? = null
     private lateinit var bottomSheetBehavior: BottomSheetBehavior<View>
     
@@ -54,6 +54,10 @@ class MainActivity : AppCompatActivity() {
     private var currentDistanceMiles: Double? = null
     private var journeyStartTime: Long? = null
 
+    /**
+     * Permission launcher for BLE and Location permissions.
+     * Only called if permissions are not already granted.
+     */
     @SuppressLint("MissingPermission")
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -70,6 +74,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
     
+    /**
+     * Permission launcher for background location permission.
+     * Only called if permission is not already granted.
+     */
     @SuppressLint("MissingPermission")
     private val backgroundLocationLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -81,6 +89,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Activity lifecycle - onCreate
+     * Called when the phone app (main activity) is created (i.e. when the
+     * user launches the app).
+     */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -117,7 +130,7 @@ class MainActivity : AppCompatActivity() {
             setTileSource(TileSourceFactory.MAPNIK)
             // Disable all touch interactions - map is fixed to user location
             setMultiTouchControls(false)
-            setBuiltInZoomControls(false)
+            zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
             // Disable scrolling and zooming
             setScrollableAreaLimitDouble(null)
             isFlingEnabled = false
@@ -272,7 +285,7 @@ class MainActivity : AppCompatActivity() {
                             // Otherwise let the normal BLE state show through (Scanning, Connecting, etc.)
                             if (ServiceStatus.hasConnectedBefore.value) {
                                 binding.topBleStatus.text = "OBD: Reconnecting..."
-                                binding.topBleStatus.setTextColor(android.graphics.Color.parseColor("#FF9800"))  // Orange for reconnecting
+                                binding.topBleStatus.setTextColor("#FF9800".toColorInt())  // Orange for reconnecting
                             }
                         } else {
                             binding.topTimeoutCountdown.visibility = View.GONE
@@ -289,10 +302,10 @@ class MainActivity : AppCompatActivity() {
                         if (!isRunning) {
                             // Service has stopped - update UI
                             binding.topBleStatus.text = "Disconnected - please reopen app to start again"
-                            binding.topBleStatus.setTextColor(android.graphics.Color.parseColor("#F44336"))
+                            binding.topBleStatus.setTextColor("#F44336".toColorInt())
                             binding.topTimeoutCountdown.visibility = View.GONE
                             binding.topGpsStatus.text = "GPS: Offline"
-                            binding.topGpsStatus.setTextColor(android.graphics.Color.parseColor("#F44336"))
+                            binding.topGpsStatus.setTextColor("#F44336".toColorInt())
                         }
                     }
                 }
@@ -315,9 +328,9 @@ class MainActivity : AppCompatActivity() {
         
         // Color coding
         val color = when (state) {
-            BleObdManager.State.READY -> android.graphics.Color.parseColor("#4CAF50")
-            BleObdManager.State.DISCONNECTED -> android.graphics.Color.parseColor("#F44336")
-            else -> android.graphics.Color.parseColor("#2196F3")
+            BleObdManager.State.READY -> "#4CAF50".toColorInt()
+            BleObdManager.State.DISCONNECTED -> "#F44336".toColorInt()
+            else -> "#2196F3".toColorInt()
         }
         binding.topBleStatus.setTextColor(color)
 
@@ -378,7 +391,7 @@ class MainActivity : AppCompatActivity() {
     private fun startDurationTimer() {
         if (durationJob != null) return
         durationJob = lifecycleScope.launch {
-            while (true) {
+            while (isActive) {
                 kotlinx.coroutines.delay(1000)  // Update every second
                 updateDurationDisplay()
             }
@@ -407,23 +420,20 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("MissingPermission")
     private fun startLocationTracking() {
-        if (locationStarted) return
-        locationStarted = true
+        if (locationJob != null) return
         
         // Just subscribe to LocationTracker metrics (foreground service handles starting it)
-        if (locationJob == null) {
-            locationJob = lifecycleScope.launch {
-                LocationTracker.metrics.collect { metrics ->
-                    metrics?.let { 
-                        viewModel.setLocationStats(it.totalTripDistanceMiles, it.averageSpeedMph)
-                        // Update map with current location
-                        runOnUiThread {
-                            updateMapLocation(it.lat, it.lon)
-                        }
-                        // Update GPS status in top panel
-                        val gpsStatus = "GPS: %.5f, %.5f".format(it.lat, it.lon)
-                        viewModel.setGpsStatus(gpsStatus)
+        locationJob = lifecycleScope.launch {
+            LocationTracker.metrics.collect { metrics ->
+                metrics?.let {
+                    viewModel.setLocationStats(it.totalTripDistanceMiles, it.averageSpeedMph)
+                    // Update map with current location
+                    runOnUiThread {
+                        updateMapLocation(it.lat, it.lon)
                     }
+                    // Update GPS status in top panel
+                    val gpsStatus = "GPS: %.5f, %.5f".format(it.lat, it.lon)
+                    viewModel.setGpsStatus(gpsStatus)
                 }
             }
         }
@@ -455,9 +465,6 @@ class MainActivity : AppCompatActivity() {
     }
     
     private fun maybeRequestBackgroundLocation() {
-        // Background location is only needed on Android 10+ (API 29+)
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return
-        
         // Check if we already have it
         val hasBackgroundLocation = checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) == 
             android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -589,13 +596,6 @@ class MainActivity : AppCompatActivity() {
             action = BleForegroundService.ACTION_START
         }
         startForegroundService(intent)
-    }
-
-    private fun stopBleForegroundService() {
-        val intent = Intent(this, BleForegroundService::class.java).apply {
-            action = BleForegroundService.ACTION_STOP
-        }
-        stopService(intent)
     }
 
     private fun exportDataFiles() {
