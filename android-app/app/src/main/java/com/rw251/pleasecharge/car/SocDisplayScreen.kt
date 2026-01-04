@@ -1,9 +1,7 @@
 package com.rw251.pleasecharge.car
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
-import androidx.annotation.RequiresPermission
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
 import androidx.car.app.model.Action
@@ -16,6 +14,8 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import com.rw251.pleasecharge.AppLogger
+import com.rw251.pleasecharge.CommonBleListener
+import com.rw251.pleasecharge.CommonBleListener.Callbacks
 import com.rw251.pleasecharge.BleConnectionManager
 import com.rw251.pleasecharge.LocationTracker
 import com.rw251.pleasecharge.MainActivity
@@ -159,48 +159,37 @@ class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMa
     }
 
     private fun createBleListener(): BleObdManager.Listener {
-        return object : BleObdManager.Listener {
-            override fun onStatus(text: String) {
-                connectionStatus = text
-                invalidate()
-            }
-
-            override fun onReady() {
-                // Status already set via onStatus
-                invalidate()
-            }
-
-            override fun onSoc(raw: Int, pct93: Double?, pct95: Double?, pct97: Double?, timestamp: Long) {
-                val pct = pct95 ?: (raw / 9.5)
-                socPercent = String.format(Locale.getDefault(), "%.1f", pct)
-                socRaw = raw.toString()
-                lastUpdateTime = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
-                lastError = null
-                invalidate()
-            }
-
-            override fun onTemp(celsius: Double, timestamp: Long) {
-                tempCelsius = String.format(Locale.getDefault(), "%.1f", celsius)
-                // Update timestamp if temp is newer than SOC timestamp
-                if (lastUpdateTime == "--:--:--") {
+        return CommonBleListener(
+            tag = "SocDisplayScreen",
+            callbacks = Callbacks(
+                onStatus = { status ->
+                    connectionStatus = status
+                    invalidate()
+                },
+                onReady = {
+                    invalidate()
+                },
+                onSoc = { raw, pct, timestamp ->
+                    socPercent = String.format(Locale.getDefault(), "%.1f", pct)
+                    socRaw = raw.toString()
                     lastUpdateTime = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
-                }
-                invalidate()
-            }
-
-            override fun onError(msg: String, ex: Throwable?) {
-                lastError = msg
-                invalidate()
-            }
-
-            override fun onLog(line: String) {
-                // Logs not displayed in car UI
-            }
-
-            override fun onStateChanged(state: BleObdManager.State) {
-                // State changes handled via onStatus
-            }
-        }
+                    lastError = null
+                    invalidate()
+                },
+                onTemp = { celsius, timestamp ->
+                    tempCelsius = String.format(Locale.getDefault(), "%.1f", celsius)
+                    if (lastUpdateTime == "--:--:--") {
+                        lastUpdateTime = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
+                    }
+                    invalidate()
+                },
+                onError = { msg, _ ->
+                    lastError = msg
+                    invalidate()
+                },
+                onLog = { /* car UI does not surface logs */ }
+            )
+        )
     }
 
     @SuppressLint("MissingPermission")

@@ -16,6 +16,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.rw251.pleasecharge.ble.BleObdManager
+import com.rw251.pleasecharge.CommonBleListener.Callbacks
 import com.rw251.pleasecharge.databinding.ActivityMainBinding
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -494,63 +495,49 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun createBleListener(): BleObdManager.Listener {
-        return object : BleObdManager.Listener {
-            override fun onStatus(text: String) {
-                runOnUiThread { viewModel.setStatus(text) }
-            }
-
-            override fun onReady() {
-                runOnUiThread {
-                    viewModel.setReady(true)
-                }
-            }
-
-            override fun onSoc(raw: Int, pct93: Double?, pct95: Double?, pct97: Double?, timestamp: Long) {
-                runOnUiThread {
-                    val pct = pct95 ?: (raw / 9.5)
-                    AppLogger.i("SOC received: raw=$raw, pct=$pct")
-                    // DataCapture logging is done by BleForegroundService only (avoid duplicates)
-                    viewModel.setSoc(
-                        display = "SOC: ${String.format(Locale.getDefault(), "%.1f", pct)}% (raw: $raw)",
-                        time = "Time: ${nowString()}"
-                    )
-                    // Update the map UI SOC display
-                    updateSocDisplay(pct)
-                }
-            }
-
-            override fun onTemp(celsius: Double, timestamp: Long) {
-                runOnUiThread {
-                    AppLogger.i("Temperature received: $celsius°C")
-                    // DataCapture logging is done by BleForegroundService only (avoid duplicates)
-                    // Update the map UI temp display
-                    updateTempDisplay(celsius)
-                }
-            }
-
-            override fun onError(msg: String, ex: Throwable?) {
-                runOnUiThread {
-                    AppLogger.e("BLE Error: $msg", ex)
-                    viewModel.appendLog("ERROR: $msg${if (ex != null) " - ${ex.message}" else ""}")
-                }
-            }
-
-            override fun onLog(line: String) {
-                runOnUiThread { 
-                    AppLogger.d(line, "BleObdManager")
-                    viewModel.appendLog(line) 
-                }
-            }
-
-            override fun onStateChanged(state: BleObdManager.State) {
-                runOnUiThread {
-                    viewModel.setState(state)
-                    if (state != BleObdManager.State.READY) {
-                        viewModel.setReady(false)
+        return CommonBleListener(
+            tag = "MainActivity",
+            callbacks = Callbacks(
+                onStatus = { status ->
+                    runOnUiThread { viewModel.setStatus(status) }
+                },
+                onReady = {
+                    runOnUiThread { viewModel.setReady(true) }
+                },
+                onSoc = { raw, pct, _ ->
+                    runOnUiThread {
+                        viewModel.setSoc(
+                            display = "SOC: ${String.format(Locale.getDefault(), "%.1f", pct)}% (raw: $raw)",
+                            time = "Time: ${nowString()}"
+                        )
+                        updateSocDisplay(pct)
+                    }
+                },
+                onTemp = { celsius, _ ->
+                    runOnUiThread {
+                        updateTempDisplay(celsius)
+                    }
+                },
+                onError = { msg, ex ->
+                    runOnUiThread {
+                        viewModel.appendLog("ERROR: $msg${if (ex != null) " - ${ex.message}" else ""}")
+                    }
+                },
+                onLog = { line ->
+                    runOnUiThread {
+                        viewModel.appendLog(line)
+                    }
+                },
+                onStateChanged = { state ->
+                    runOnUiThread {
+                        viewModel.setState(state)
+                        if (state != BleObdManager.State.READY) {
+                            viewModel.setReady(false)
+                        }
                     }
                 }
-            }
-        }
+            )
+        )
     }
 
     override fun onResume() {

@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import com.rw251.pleasecharge.CommonBleListener.Callbacks
 import com.rw251.pleasecharge.ble.BleObdManager
 import com.rw251.pleasecharge.car.TileCache
 import kotlinx.coroutines.CoroutineScope
@@ -92,32 +93,23 @@ class BleForegroundService : Service() {
             // Ensure manager exists so BLE can persist
             val manager = BleConnectionManager.getOrCreateManager(
                 context = this@BleForegroundService,
-                listener = object : BleObdManager.Listener {
-                    override fun onStatus(text: String) { /* no-op */ }
-                    override fun onReady() {
-                        onBleConnectionChanged(true)
-                    }
-                    override fun onSoc(raw: Int, pct93: Double?, pct95: Double?, pct97: Double?, timestamp: Long) {
-                        // Log SOC data even when in background
-                        val pct = pct95 ?: (raw / 9.5)
-                        DataCapture.logSoc(raw, pct, timestamp)
-                    }
-                    override fun onTemp(celsius: Double, timestamp: Long) {
-                        // Log temp data even when in background
-                        DataCapture.logTemp(celsius, timestamp)
-                    }
-                    override fun onError(msg: String, ex: Throwable?) {
-                        AppLogger.e("BleForegroundService: BLE error: $msg", ex)
-                     }
-                    override fun onLog(line: String) { /* no-op */ }
-                    override fun onStateChanged(state: BleObdManager.State) {
-                        // log state changes
-                        AppLogger.i("BleForegroundService: BLE state changed to $state")
-                        // Track connection state for auto-shutdown timeout
-                        val isConnected = state == BleObdManager.State.READY
-                        onBleConnectionChanged(isConnected)
-                    }
-                },
+                listener = CommonBleListener(
+                    tag = "BleForegroundService",
+                    callbacks = Callbacks(
+                        onReady = { onBleConnectionChanged(true) },
+                        onSoc = { raw, pct, timestamp ->
+                            DataCapture.logSoc(raw, pct, timestamp)
+                        },
+                        onTemp = { celsius, timestamp ->
+                            DataCapture.logTemp(celsius, timestamp)
+                        },
+                        onStateChanged = { state ->
+                            AppLogger.i("BleForegroundService: BLE state changed to $state")
+                            val isConnected = state == BleObdManager.State.READY
+                            onBleConnectionChanged(isConnected)
+                        }
+                    )
+                ),
                 updateListener = true, // Update listener to capture data
             )
             bleManager = manager
@@ -135,7 +127,7 @@ class BleForegroundService : Service() {
     private fun onBleConnectionChanged(isConnected: Boolean) {
         if (isConnected) {
             // Connected - cancel any pending timeout and mark that we've connected
-            if (lastBleConnectedState != isConnected) {
+            if (!lastBleConnectedState) {
                 bleTimeoutJob?.cancel()
                 bleTimeoutJob = null
                 ServiceStatus.setTimeoutSeconds(null)
@@ -259,14 +251,14 @@ class BleForegroundService : Service() {
      * Calculate distance between two points in km using Haversine formula
      */
     private fun haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-        val R = 6371.0  // Earth radius in km
+        val earthRadius = 6371.0  // Earth radius in km
         val dLat = Math.toRadians(lat2 - lat1)
         val dLon = Math.toRadians(lon2 - lon1)
         val a = kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
                 kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) *
                 kotlin.math.sin(dLon / 2) * kotlin.math.sin(dLon / 2)
         val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
-        return R * c
+        return earthRadius * c
     }
     
     override fun onDestroy() {
