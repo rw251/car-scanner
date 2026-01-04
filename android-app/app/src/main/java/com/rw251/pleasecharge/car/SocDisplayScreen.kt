@@ -158,41 +158,6 @@ class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMa
         return builder.build()
     }
 
-    @RequiresPermission(allOf = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT])
-    private fun connectToBle() {
-        if (bleManager == null) {
-            listener = createBleListener()
-            bleManager = BleConnectionManager.getOrCreateManager(
-                context = carContext,
-                listener = listener!!
-            )
-        } else {
-            // Manager exists, just update the listener
-            listener = createBleListener()
-            BleConnectionManager.updateListener(listener!!)
-        }
-        
-        // Check permissions
-        if (bleManager?.hasAllPermissions() == false) {
-            permissionsMissing = true
-            lastError = "Permissions needed - open phone app to grant access"
-            invalidate()
-            return
-        }
-        
-        permissionsMissing = false
-        
-        // Only start if not already connected - check current state
-        val currentState = bleManager?.getState()
-        if (currentState != BleObdManager.State.READY) {
-            // Not ready yet, start connection
-            AppLogger.i("SocDisplayScreen: connectToBle -  Current BLE state is $currentState, starting connection")
-            bleManager?.start()
-        }
-        // Note: Don't call requestSoc() here - BleObdManager handles polling automatically
-        // when it reaches READY state. Calling it manually causes duplicate requests.
-    }
-
     private fun createBleListener(): BleObdManager.Listener {
         return object : BleObdManager.Listener {
             override fun onStatus(text: String) {

@@ -27,9 +27,9 @@ object AppLogger {
     private var logFile: File? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val writeQueue = ConcurrentLinkedQueue<String>()
-    private val memoryBuffer = ArrayDeque<String>()
+    // private val memoryBuffer = ArrayDeque<String>()
     
-    private val _logLines = MutableStateFlow<List<String>>(emptyList())
+    // private val _logLines = MutableStateFlow<List<String>>(emptyList())
     
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
     
@@ -77,13 +77,13 @@ object AppLogger {
         }
         
         // Add to memory buffer
-        synchronized(memoryBuffer) {
-            memoryBuffer.add(formattedLine)
-            if (memoryBuffer.size > MAX_MEMORY_LINES) {
-                memoryBuffer.removeFirst()
-            }
-            _logLines.value = memoryBuffer.toList()
-        }
+        // synchronized(memoryBuffer) {
+        //     memoryBuffer.add(formattedLine)
+        //     if (memoryBuffer.size > MAX_MEMORY_LINES) {
+        //         memoryBuffer.removeFirst()
+        //     }
+        //     // _logLines.value = memoryBuffer.toList()
+        // }
         
         // Queue for file write
         writeQueue.offer(formattedLine)
@@ -129,10 +129,10 @@ object AppLogger {
     fun clearLogs() {
         try {
             logFile?.writeText("")
-            synchronized(memoryBuffer) {
-                memoryBuffer.clear()
-                _logLines.value = emptyList()
-            }
+            // synchronized(memoryBuffer) {
+            //     memoryBuffer.clear()
+            //     // _logLines.value = emptyList()
+            // }
             i("Logs cleared")
         } catch (e: Exception) {
             e("Failed to clear logs", e)
