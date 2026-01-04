@@ -111,7 +111,7 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Hide action bar for full-screen map
+        // Without this you get a purple bar with the app name at the top
         supportActionBar?.hide()
 
         // Start foreground service EARLY - ensures location tracking starts
@@ -409,14 +409,6 @@ class MainActivity : AppCompatActivity() {
         binding.mapView.controller.animateTo(point)
         binding.mapView.invalidate()
     }
-
-    // private fun maybeStartLocationTracking() {
-    //     val hasFine = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
-    //     val hasCoarse = checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
-    //     if (hasFine || hasCoarse) {
-    //         startLocationTracking()
-    //     }
-    // }
 
     @SuppressLint("MissingPermission")
     private fun startLocationTracking() {

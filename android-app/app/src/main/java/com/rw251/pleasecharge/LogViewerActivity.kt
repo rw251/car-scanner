@@ -22,6 +22,7 @@ class LogViewerActivity : AppCompatActivity() {
         binding = ActivityLogViewerBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // Without this you get a purple bar with the app name at the top
         supportActionBar?.hide()
 
         setupUI()
@@ -63,48 +64,5 @@ class LogViewerActivity : AppCompatActivity() {
             }
             .setNegativeButton("Cancel", null)
             .show()
-    }
-
-    private fun shareLogs() {
-        try {
-            val logPath = AppLogger.getLogFilePath() ?: run {
-                AppLogger.w("Cannot share logs - log file path not available")
-                return
-            }
-
-            val logFile = File(logPath)
-            if (!logFile.exists() || logFile.length() == 0L) {
-                AlertDialog.Builder(this)
-                    .setTitle("No Logs")
-                    .setMessage("Log file is empty or doesn't exist.")
-                    .setPositiveButton("OK", null)
-                    .show()
-                return
-            }
-
-            val uri = FileProvider.getUriForFile(
-                this,
-                "${applicationContext.packageName}.fileprovider",
-                logFile
-            )
-
-            val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                putExtra(Intent.EXTRA_SUBJECT, "PleaseCharge App Logs")
-                putExtra(Intent.EXTRA_TEXT, "PleaseCharge application logs attached.")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-
-            startActivity(Intent.createChooser(shareIntent, "Share logs via"))
-            AppLogger.i("Logs shared via system share sheet")
-        } catch (e: Exception) {
-            AppLogger.e("Failed to share logs", e)
-            AlertDialog.Builder(this)
-                .setTitle("Error")
-                .setMessage("Failed to share logs: ${e.message}")
-                .setPositiveButton("OK", null)
-                .show()
-        }
     }
 }
