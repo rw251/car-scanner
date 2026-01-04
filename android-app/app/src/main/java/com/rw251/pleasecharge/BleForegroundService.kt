@@ -37,7 +37,7 @@ class BleForegroundService : Service() {
         const val NOTIFICATION_ID = 1001
         const val ACTION_START = "com.rw251.pleasecharge.action.START"
         const val ACTION_STOP = "com.rw251.pleasecharge.action.STOP"
-        const val BLE_DISCONNECT_TIMEOUT_MS = 30 * 1000L  // 10 minutes
+        const val BLE_DISCONNECT_TIMEOUT_MS = 10  * 1000L  // 10 minutes
     }
 
     private var bleManager: BleObdManager? = null
@@ -106,9 +106,13 @@ class BleForegroundService : Service() {
                         // Log temp data even when in background
                         DataCapture.logTemp(celsius, timestamp)
                     }
-                    override fun onError(msg: String, ex: Throwable?) { /* no-op */ }
+                    override fun onError(msg: String, ex: Throwable?) {
+                        AppLogger.e("BleForegroundService: BLE error: $msg", ex)
+                     }
                     override fun onLog(line: String) { /* no-op */ }
                     override fun onStateChanged(state: BleObdManager.State) {
+                        // log state changes
+                        AppLogger.i("BleForegroundService: BLE state changed to $state")
                         // Track connection state for auto-shutdown timeout
                         val isConnected = state == BleObdManager.State.READY
                         onBleConnectionChanged(isConnected)
@@ -126,21 +130,25 @@ class BleForegroundService : Service() {
     
     /**
      * Called when BLE connection state changes.
-     * Manages the auto-shutdown timeout: starts countdown when disconnected, cancels when connected.
+     * Manages the auto-shutdown timeout: starts/resets countdown when disconnected, cancels when connected.
      */
     private fun onBleConnectionChanged(isConnected: Boolean) {
-        if (isConnected == lastBleConnectedState) return
-        lastBleConnectedState = isConnected
-        
         if (isConnected) {
-            // Connected - cancel any pending timeout
-            bleTimeoutJob?.cancel()
-            bleTimeoutJob = null
-            ServiceStatus.setTimeoutSeconds(null)
-            AppLogger.i("BleForegroundService: BLE connected - cancelled auto-shutdown timeout")
+            // Connected - cancel any pending timeout and mark that we've connected
+            if (lastBleConnectedState != isConnected) {
+                bleTimeoutJob?.cancel()
+                bleTimeoutJob = null
+                ServiceStatus.setTimeoutSeconds(null)
+                ServiceStatus.setHasConnectedBefore(true)  // Mark that we've successfully connected
+                AppLogger.i("BleForegroundService: BLE connected - cancelled auto-shutdown timeout")
+            }
+            lastBleConnectedState = true
         } else {
-            // Disconnected - start the 10-minute countdown
-            startBleDisconnectTimeout()
+            // Disconnected - restart the countdown (this resets the timer on any state change)
+            lastBleConnectedState = false
+            if(ServiceStatus.isServiceRunning.value) {
+              startBleDisconnectTimeout()
+            }
         }
     }
     
@@ -171,6 +179,7 @@ class BleForegroundService : Service() {
             ServiceStatus.setTimeoutSeconds(0)
             AppLogger.i("BleForegroundService: 10 minutes without BLE connection - stopping service")
             ServiceStatus.setServiceRunning(false)  // Signal to UI that service is stopping
+            stopBleManager()  // Stop BLE scanning/connection
             stopLocationTracking()
             stopSelf()
         }
@@ -263,9 +272,21 @@ class BleForegroundService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         bleTimeoutJob?.cancel()
+        stopBleManager()
         stopLocationTracking()
         serviceScope.cancel()
         AppLogger.i("BleForegroundService: Service destroyed")
+    }
+    
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun stopBleManager() {
+        try {
+            bleManager?.stop()
+            bleManager = null
+            AppLogger.i("BleForegroundService: BLE manager stopped")
+        } catch (e: Exception) {
+            AppLogger.e("BleForegroundService: Error stopping BLE manager", e)
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

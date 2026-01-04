@@ -189,8 +189,8 @@ class SocDisplayScreen(carContext: CarContext, private val mapRenderer: SimpleMa
             AppLogger.i("SocDisplayScreen: connectToBle -  Current BLE state is $currentState, starting connection")
             bleManager?.start()
         }
-        // Try to request data immediately in case already connected
-        bleManager?.requestSoc()
+        // Note: Don't call requestSoc() here - BleObdManager handles polling automatically
+        // when it reaches READY state. Calling it manually causes duplicate requests.
     }
 
     private fun createBleListener(): BleObdManager.Listener {

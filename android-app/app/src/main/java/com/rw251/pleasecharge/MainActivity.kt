@@ -89,6 +89,9 @@ class MainActivity : AppCompatActivity() {
         DataCapture.init(this)
         AppLogger.i("MainActivity created")
         
+        // Reset service status for fresh start
+        ServiceStatus.reset()
+        
         // Initialize osmdroid configuration
         Configuration.getInstance().userAgentValue = packageName
 
@@ -101,7 +104,6 @@ class MainActivity : AppCompatActivity() {
         // Start foreground service EARLY - ensures location tracking starts
         // regardless of permission state. It will wait for permissions but won't lose time.
         startBleForegroundService()
-        AppLogger.i("MainActivity: Foreground service started in onCreate")
 
         setupMap()
         setupBottomSheet()
@@ -265,7 +267,13 @@ class MainActivity : AppCompatActivity() {
                             binding.topTimeoutCountdown.visibility = View.VISIBLE
                             val minutes = seconds / 60
                             val secs = seconds % 60
-                            binding.topTimeoutCountdown.text = "Service auto-stop in: ${minutes}m ${secs}s"
+                            binding.topTimeoutCountdown.text = "Auto-stop in: ${minutes}m ${secs}s"
+                            // Only show "Reconnecting" if we've previously connected
+                            // Otherwise let the normal BLE state show through (Scanning, Connecting, etc.)
+                            if (ServiceStatus.hasConnectedBefore.value) {
+                                binding.topBleStatus.text = "OBD: Reconnecting..."
+                                binding.topBleStatus.setTextColor(android.graphics.Color.parseColor("#FF9800"))  // Orange for reconnecting
+                            }
                         } else {
                             binding.topTimeoutCountdown.visibility = View.GONE
                         }
@@ -389,23 +397,20 @@ class MainActivity : AppCompatActivity() {
         binding.mapView.invalidate()
     }
 
-    private fun maybeStartLocationTracking() {
-        val hasFine = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        val hasCoarse = checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        if (hasFine || hasCoarse) {
-            startLocationTracking()
-        }
-    }
+    // private fun maybeStartLocationTracking() {
+    //     val hasFine = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    //     val hasCoarse = checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    //     if (hasFine || hasCoarse) {
+    //         startLocationTracking()
+    //     }
+    // }
 
     @SuppressLint("MissingPermission")
     private fun startLocationTracking() {
         if (locationStarted) return
         locationStarted = true
-        AppLogger.i("MainActivity: Ensuring foreground service is started")
-        // Ensure foreground service is started - it will handle LocationTracker.start()
-        startBleForegroundService()
         
-        // Just subscribe to LocationTracker metrics (service started it)
+        // Just subscribe to LocationTracker metrics (foreground service handles starting it)
         if (locationJob == null) {
             locationJob = lifecycleScope.launch {
                 LocationTracker.metrics.collect { metrics ->
@@ -485,9 +490,7 @@ class MainActivity : AppCompatActivity() {
                 listener = createBleListener()
             )
         }
-        startBleForegroundService()
-        // log a message
-        AppLogger.i("MainActivity: startBleManager - Starting BLE manager")
+        // Foreground service already started in onCreate - just start the BLE manager
         manager?.start()
     }
 

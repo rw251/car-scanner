@@ -7,6 +7,7 @@ import androidx.car.app.Session
 import androidx.car.app.validation.HostValidator
 import com.rw251.pleasecharge.AppLogger
 import com.rw251.pleasecharge.BleForegroundService
+import com.rw251.pleasecharge.ServiceStatus
 
 /**
  * Android Auto Car App Service
@@ -31,6 +32,9 @@ class PleaseChargeSession : Session() {
     override fun onCreateScreen(intent: Intent): Screen {
         android.util.Log.i("PleaseChargeSession", "onCreateScreen called")
         AppLogger.i("PleaseChargeSession: onCreateScreen called")
+        
+        // Reset service status for fresh start (in case launched directly from Android Auto)
+        ServiceStatus.reset()
         
         // Start the foreground service to initialize location tracking and BLE
         // This ensures GPS works even when only Android Auto is launched (no phone app)

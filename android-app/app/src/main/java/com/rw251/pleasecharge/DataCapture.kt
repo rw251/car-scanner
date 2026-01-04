@@ -13,16 +13,32 @@ import java.util.concurrent.ConcurrentLinkedQueue
 /**
  * Captures vehicle metrics to CSV for later analysis.
  * Format: timestamp,soc_raw,soc_pct,temp_celsius,speed_mph,distance_miles,lat,lon
+ * 
+ * Includes deduplication to prevent logging duplicate values within short time windows.
  */
 object DataCapture {
     private const val CSV_FILE_NAME = "vehicle_data.csv"
     private const val MAX_CSV_FILE_SIZE = 10 * 1024 * 1024  // 10 MB
+    
+    // Deduplication windows (milliseconds)
+    private const val SOC_DEDUP_WINDOW_MS = 500L      // Don't log same SOC within 500ms
+    private const val TEMP_DEDUP_WINDOW_MS = 500L     // Don't log same temp within 500ms
+    private const val LOCATION_DEDUP_WINDOW_MS = 100L // Don't log same location within 100ms
     
     private var csvFile: File? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val writeQueue = ConcurrentLinkedQueue<CsvRow>()
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
     private var initialized = false
+    
+    // Last logged values for deduplication
+    private var lastSocRaw: Int? = null
+    private var lastSocTimestamp: Long = 0
+    private var lastTempCelsius: Double? = null
+    private var lastTempTimestamp: Long = 0
+    private var lastLocationTimestamp: Long = 0
+    private var lastLat: Double? = null
+    private var lastLon: Double? = null
     
     data class CsvRow(
         val timestamp: Long,
@@ -54,14 +70,36 @@ object DataCapture {
     }
     
     fun logSoc(raw: Int, pct: Double?, timestamp: Long = System.currentTimeMillis()) {
+        // Deduplicate: skip if same value within window
+        if (raw == lastSocRaw && (timestamp - lastSocTimestamp) < SOC_DEDUP_WINDOW_MS) {
+          AppLogger.i("DataCapture: Skipping duplicate SOC raw value $raw within deduplication window")
+            return
+        }
+        lastSocRaw = raw
+        lastSocTimestamp = timestamp
         enqueue(CsvRow(timestamp = timestamp, socRaw = raw, socPct = pct))
     }
     
     fun logTemp(celsius: Double, timestamp: Long = System.currentTimeMillis()) {
+        // Deduplicate: skip if same value within window
+        if (celsius == lastTempCelsius && (timestamp - lastTempTimestamp) < TEMP_DEDUP_WINDOW_MS) {
+          AppLogger.i("DataCapture: Skipping duplicate temperature value $celsius within deduplication window")
+            return
+        }
+        lastTempCelsius = celsius
+        lastTempTimestamp = timestamp
         enqueue(CsvRow(timestamp = timestamp, tempCelsius = celsius))
     }
     
     fun logLocation(lat: Double, lon: Double, speedMph: Double, distanceMiles: Double, timestamp: Long = System.currentTimeMillis()) {
+        // Deduplicate: skip if same location within window
+        if (lat == lastLat && lon == lastLon && (timestamp - lastLocationTimestamp) < LOCATION_DEDUP_WINDOW_MS) {
+          AppLogger.i("DataCapture: Skipping duplicate location value lat=$lat, lon=$lon within deduplication window")
+            return
+        }
+        lastLat = lat
+        lastLon = lon
+        lastLocationTimestamp = timestamp
         enqueue(
             CsvRow(
                 timestamp = timestamp,
