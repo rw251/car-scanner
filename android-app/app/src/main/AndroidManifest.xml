@@ -95,6 +95,11 @@
         <meta-data
             android:name="com.google.android.geo.API_KEY"
             android:value="${NAVIGATOR_API_KEY}" />
+        
+        <!-- Google Places API key (same as NAVIGATOR_API_KEY) -->
+        <meta-data
+            android:name="com.google.android.libraries.places.API_KEY"
+            android:value="${NAVIGATOR_API_KEY}" />
     </application>
 
 </manifest>

@@ -21,11 +21,6 @@ import com.rw251.pleasecharge.CommonBleListener.Callbacks
 import com.rw251.pleasecharge.databinding.ActivityMainBinding
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-//import org.osmdroid.config.Configuration
-//import org.osmdroid.tileprovider.tilesource.TileSourceFactory
-//import org.osmdroid.util.GeoPoint
-//import org.osmdroid.views.CustomZoomButtonsController
-//import org.osmdroid.views.overlay.Marker
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -37,6 +32,11 @@ import com.google.android.libraries.navigation.RoutingOptions
 import com.google.android.libraries.navigation.Waypoint
 import kotlinx.coroutines.isActive
 import com.rw251.pleasecharge.BuildConfig
+import com.google.android.libraries.places.api.Places
+import com.google.android.libraries.places.api.model.Place
+import com.google.android.libraries.places.widget.AutocompleteSupportFragment
+import com.google.android.libraries.places.api.net.FetchPlaceRequest
+import kotlin.math.roundToInt
 
 /**
  * Full-screen map activity with collapsible stats overlay.
@@ -52,8 +52,14 @@ class MainActivity : AppCompatActivity() {
     private var manager: BleObdManager? = null
     private var locationJob: Job? = null
     private var durationJob: Job? = null
-//    private var locationMarker: Marker? = null
     private lateinit var bottomSheetBehavior: BottomSheetBehavior<View>
+    
+    // Place pickers
+    private var originPlacePicker: AutocompleteSupportFragment? = null
+    private var destinationPlacePicker: AutocompleteSupportFragment? = null
+    private var originPlace: Place? = null
+    private var destinationPlace: Place? = null
+    private var currentLocation: LatLng? = null
     
     // Track current stats for display
     private var currentSocPct: Double? = null
@@ -115,9 +121,6 @@ class MainActivity : AppCompatActivity() {
         
         // Reset service status for fresh start
         ServiceStatus.reset()
-        
-        // Initialize osmdroid configuration
-//        Configuration.getInstance().userAgentValue = packageName
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -129,8 +132,8 @@ class MainActivity : AppCompatActivity() {
         // regardless of permission state. It will wait for permissions but won't lose time.
         startBleForegroundService()
 
-        // setupMap()
         initializeNavigator()
+        initializePlacePickers()
         setupBottomSheet()
         setupUI()
         observeViewModel()
@@ -167,10 +170,137 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    private fun initializePlacePickers() {
+        // Initialize Places SDK (uses API key from AndroidManifest.xml meta-data)
+        if (!Places.isInitialized()) {
+            try {
+                Places.initialize(applicationContext, BuildConfig.NAVIGATOR_API_KEY)
+            } catch (e: Exception) {
+                AppLogger.e("Failed to initialize Places SDK", e)
+                return
+            }
+        }
+
+        // Get the place picker fragments
+        originPlacePicker = supportFragmentManager.findFragmentById(R.id.originPlacePickerFragment) as? AutocompleteSupportFragment
+        destinationPlacePicker = supportFragmentManager.findFragmentById(R.id.destinationPlacePickerFragment) as? AutocompleteSupportFragment
+
+        originPlacePicker?.apply {
+            setPlaceFields(listOf(Place.Field.ID, Place.Field.NAME, Place.Field.LAT_LNG, Place.Field.ADDRESS))
+            setOnPlaceSelectedListener(object : com.google.android.libraries.places.widget.listener.PlaceSelectionListener {
+                override fun onPlaceSelected(place: Place) {
+                    originPlace = place
+                    AppLogger.i("Origin selected: ${place.name}")
+                    updateRoute()
+                }
+
+                override fun onError(status: com.google.android.gms.common.api.Status) {
+                    AppLogger.w("Origin picker error: ${status.statusMessage}")
+                }
+            })
+        }
+
+        destinationPlacePicker?.apply {
+            setPlaceFields(listOf(Place.Field.ID, Place.Field.NAME, Place.Field.LAT_LNG, Place.Field.ADDRESS))
+            setOnPlaceSelectedListener(object : com.google.android.libraries.places.widget.listener.PlaceSelectionListener {
+                override fun onPlaceSelected(place: Place) {
+                    destinationPlace = place
+                    AppLogger.i("Destination selected: ${place.name}")
+                    updateRoute()
+                }
+
+                override fun onError(status: com.google.android.gms.common.api.Status) {
+                    AppLogger.w("Destination picker error: ${status.statusMessage}")
+                }
+            })
+        }
+    }
+
+    private fun updateRoute() {
+        val origin = originPlace?.latLng ?: currentLocation
+        val destination = destinationPlace?.latLng
+
+        if (origin != null && destination != null) {
+            calculateAndDisplayRoute(origin, destination)
+        }
+    }
+
+    private fun calculateAndDisplayRoute(origin: LatLng, destination: LatLng) {
+        lifecycleScope.launch {
+            try {
+                // Calculate route using Navigation SDK
+                val navigator = mNavigator
+                val routingOptions = mRoutingOptions
+
+                if (navigator == null || routingOptions == null) {
+                    AppLogger.w("Navigator not ready for route calculation")
+                    return@launch
+                }
+
+                val waypoint = Waypoint.builder()
+                    .setTitle("Destination")
+                    .setLatLng(destination.latitude, destination.longitude)
+                    .build()
+
+                val pendingRoute = navigator.setDestination(waypoint, routingOptions)
+                pendingRoute.setOnResultListener { code ->
+                    when (code) {
+                        Navigator.RouteStatus.OK -> {
+                            // Get route info - navigator has the route calculated
+                            displayRouteInfo(origin, destination)
+                        }
+                        Navigator.RouteStatus.NO_ROUTE_FOUND -> {
+                            AppLogger.w("No route found")
+                            binding.routeInfoPanel.visibility = View.GONE
+                        }
+                        else -> AppLogger.e("Route calculation failed: $code")
+                    }
+                }
+            } catch (e: Exception) {
+                AppLogger.e("Error calculating route", e)
+            }
+        }
+    }
+
+    private fun displayRouteInfo(origin: LatLng, destination: LatLng) {
+        // Calculate distance and duration estimate using Haversine formula and average speed
+        val distance = haversineDistance(origin.latitude, origin.longitude, destination.latitude, destination.longitude)
+        val durationHours = distance / 60.0 // Assume average 60 km/h
+        val durationMinutes = (durationHours * 60).roundToInt()
+
+        binding.routeDistance.text = String.format(Locale.getDefault(), "%.1f km", distance)
+        binding.routeDuration.text = if (durationMinutes < 60) {
+            "${durationMinutes} min"
+        } else {
+            val hours = durationMinutes / 60
+            val mins = durationMinutes % 60
+            "${hours}h ${mins}min"
+        }
+
+        binding.routeInfoPanel.visibility = View.VISIBLE
+        binding.startNavigationButton.setOnClickListener {
+            startNavigation(destination)
+        }
+    }
+
+    private fun haversineDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val r = 6371.0 // Earth radius in km
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2)
+        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        return r * c
+    }
+
+    private fun startNavigation(destination: LatLng) {
+        navigateToPlace(destination)
+    }
+
     private fun displayMessage(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
-
 
     fun navigateToPlace(destination: LatLng) {
         val navigator = mNavigator
@@ -466,6 +596,7 @@ class MainActivity : AppCompatActivity() {
     }
     
     @SuppressLint("SetTextI18n")
+    
     private fun updateDurationDisplay() {
         journeyStartTime?.let { start ->
             val durationMs = System.currentTimeMillis() - start
@@ -491,16 +622,7 @@ class MainActivity : AppCompatActivity() {
     private fun stopDurationTimer() {
         durationJob?.cancel()
         durationJob = null
-    }
-    
-    private fun updateMapLocation(lat: Double, lon: Double) {
-//        val point = GeoPoint(lat, lon)
-//        locationMarker?.position = point
-        // binding.mapView.controller.animateTo(point)
-        // binding.mapView.invalidate()
-    }
-
-    @SuppressLint("MissingPermission")
+    }    @SuppressLint("MissingPermission")
     private fun startLocationTracking() {
         if (locationJob != null) return
         
@@ -509,9 +631,11 @@ class MainActivity : AppCompatActivity() {
             LocationTracker.metrics.collect { metrics ->
                 metrics?.let {
                     viewModel.setLocationStats(it.totalTripDistanceMiles, it.averageSpeedMph)
-                    // Update map with current location
-                    runOnUiThread {
-                        updateMapLocation(it.lat, it.lon)
+                    // Update current location
+                    currentLocation = LatLng(it.lat, it.lon)
+                    // If origin not selected, update it to current location for route calculation
+                    if (originPlace == null && destinationPlace != null) {
+                        updateRoute()
                     }
                     // Update GPS status in top panel
                     val gpsStatus = "GPS: %.5f, %.5f".format(it.lat, it.lon)
