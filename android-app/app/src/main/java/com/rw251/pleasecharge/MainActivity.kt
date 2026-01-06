@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.annotation.RequiresPermission
@@ -20,16 +21,22 @@ import com.rw251.pleasecharge.CommonBleListener.Callbacks
 import com.rw251.pleasecharge.databinding.ActivityMainBinding
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
-import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.CustomZoomButtonsController
-import org.osmdroid.views.overlay.Marker
+//import org.osmdroid.config.Configuration
+//import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+//import org.osmdroid.util.GeoPoint
+//import org.osmdroid.views.CustomZoomButtonsController
+//import org.osmdroid.views.overlay.Marker
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import androidx.core.graphics.toColorInt
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.libraries.navigation.NavigationApi
+import com.google.android.libraries.navigation.Navigator
+import com.google.android.libraries.navigation.RoutingOptions
+import com.google.android.libraries.navigation.Waypoint
 import kotlinx.coroutines.isActive
+import com.rw251.pleasecharge.BuildConfig
 
 /**
  * Full-screen map activity with collapsible stats overlay.
@@ -45,7 +52,7 @@ class MainActivity : AppCompatActivity() {
     private var manager: BleObdManager? = null
     private var locationJob: Job? = null
     private var durationJob: Job? = null
-    private var locationMarker: Marker? = null
+//    private var locationMarker: Marker? = null
     private lateinit var bottomSheetBehavior: BottomSheetBehavior<View>
     
     // Track current stats for display
@@ -55,6 +62,9 @@ class MainActivity : AppCompatActivity() {
     private var currentDistanceMiles: Double? = null
     private var journeyStartTime: Long? = null
 
+    // Make navigator and routing options nullable as they're initialized later
+    var mNavigator: Navigator? = null
+    var mRoutingOptions: RoutingOptions? = null
     /**
      * Permission launcher for BLE and Location permissions.
      * Only called if permissions are not already granted.
@@ -107,7 +117,7 @@ class MainActivity : AppCompatActivity() {
         ServiceStatus.reset()
         
         // Initialize osmdroid configuration
-        Configuration.getInstance().userAgentValue = packageName
+//        Configuration.getInstance().userAgentValue = packageName
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -119,72 +129,151 @@ class MainActivity : AppCompatActivity() {
         // regardless of permission state. It will wait for permissions but won't lose time.
         startBleForegroundService()
 
-        setupMap()
+        // setupMap()
+        initializeNavigator()
         setupBottomSheet()
         setupUI()
         observeViewModel()
-        // ensurePermissionsAndStart() is called in setupUI(), so no need for duplicate maybeStartLocationTracking()
+        // ensurePermissionsAndStart() is called in setupUI(), s/local.propertiesnao no need for duplicate maybeStartLocationTracking()
     }
     
-    private fun setupMap() {
-        binding.mapView.apply {
-            setTileSource(TileSourceFactory.MAPNIK)
-            // Disable all touch interactions - map is fixed to user location
-            setMultiTouchControls(false)
-            zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
-            // Disable scrolling and zooming
-            setScrollableAreaLimitDouble(null)
-            isFlingEnabled = false
-            // Disable horizontal and vertical scroll (prevents drag/pan)
-            isHorizontalMapRepetitionEnabled = false
-            isVerticalMapRepetitionEnabled = false
-            controller.setZoom(17.0)
-            // Default to UK center initially
-            controller.setCenter(GeoPoint(54.0, -2.0))
-            
-            // Override touch events to completely disable map interaction
-            // but still allow touches to pass through to the bottom sheet
-            overlays.add(0, object : org.osmdroid.views.overlay.Overlay() {
-                override fun onDoubleTap(
-                    e: android.view.MotionEvent?,
-                    pMapView: org.osmdroid.views.MapView?
-                ): Boolean {
-                    // Consume double-tap to prevent zoom
-                    return true
+    fun initializeNavigator() {
+        // Initialize the Navigation SDK
+        NavigationApi.getNavigator(this, object : NavigationApi.NavigatorListener {
+            /**
+             * Sets up the navigation UI when the navigator is ready for use.
+             */
+            override fun onNavigatorReady(navigator: Navigator) {
+                displayMessage("Navigator ready.")
+                mNavigator = navigator
+
+                // Set the travel mode.
+                mRoutingOptions = RoutingOptions().travelMode(RoutingOptions.TravelMode.DRIVING)
+            }
+
+            /**
+             * Handles errors from the Navigation SDK.
+             * @param errorCode The error code returned by the navigator.
+             */
+            override fun onError(@NavigationApi.ErrorCode errorCode: Int) {
+                when (errorCode) {
+                    NavigationApi.ErrorCode.NOT_AUTHORIZED -> displayMessage("Error: Your API key is invalid or not authorized.")
+                    NavigationApi.ErrorCode.TERMS_NOT_ACCEPTED -> displayMessage("Error: User did not accept the Navigation Terms of Use.")
+                    NavigationApi.ErrorCode.NETWORK_ERROR -> displayMessage("Error: Network error.")
+                    NavigationApi.ErrorCode.LOCATION_PERMISSION_MISSING -> displayMessage("Error: Location permission is missing.")
+                    else -> displayMessage("Error loading Navigation SDK: $errorCode")
                 }
-                
-                override fun onScroll(
-                    pEvent1: android.view.MotionEvent?,
-                    pEvent2: android.view.MotionEvent?,
-                    pDistanceX: Float,
-                    pDistanceY: Float,
-                    pMapView: org.osmdroid.views.MapView?
-                ): Boolean {
-                    // Consume scroll to prevent pan
-                    return true
-                }
-                
-                override fun onFling(
-                    pEvent1: android.view.MotionEvent?,
-                    pEvent2: android.view.MotionEvent?,
-                    pVelocityX: Float,
-                    pVelocityY: Float,
-                    pMapView: org.osmdroid.views.MapView?
-                ): Boolean {
-                    // Consume fling to prevent pan
-                    return true
-                }
-            })
+            }
+        })
+    }
+
+    private fun displayMessage(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+
+    fun navigateToPlace(destination: LatLng) {
+        val navigator = mNavigator
+        val routingOptions = mRoutingOptions
+        
+        if (navigator == null) {
+            displayMessage("Navigator not initialized yet.")
+            return
         }
         
-        // Create location marker
-        locationMarker = Marker(binding.mapView).apply {
-            setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-            icon = ContextCompat.getDrawable(this@MainActivity, R.drawable.location_dot)
-            title = "Current Location"
+        if (routingOptions == null) {
+            displayMessage("Routing options not set.")
+            return
         }
-        binding.mapView.overlays.add(locationMarker)
+
+        val waypoint: Waypoint
+        try {
+            waypoint = Waypoint.builder()
+                .setTitle("Destination")
+                .setLatLng(destination.latitude, destination.longitude)
+                .build()
+        } catch (e: Waypoint.UnsupportedPlaceIdException) {
+            displayMessage("Error creating waypoint: ${e.message}")
+            return
+        }
+
+        // Set the destination and start navigation
+        val pendingRoute = navigator.setDestination(waypoint, routingOptions)
+        pendingRoute.setOnResultListener { code ->
+            when (code) {
+                Navigator.RouteStatus.OK -> {
+                    displayMessage("Route calculated successfully.")
+                    // Start guidance
+                    navigator.startGuidance()
+                    displayMessage("Navigation started.")
+                }
+                Navigator.RouteStatus.NO_ROUTE_FOUND -> displayMessage("No route found.")
+                Navigator.RouteStatus.NETWORK_ERROR -> displayMessage("Network error while calculating route.")
+                Navigator.RouteStatus.ROUTE_CANCELED -> displayMessage("Route calculation canceled.")
+                else -> displayMessage("Error calculating route: $code")
+            }
+        }
     }
+
+    // private fun setupMap() {
+    //     binding.mapView.apply {
+    //         setTileSource(TileSourceFactory.MAPNIK)
+    //         // Disable all touch interactions - map is fixed to user location
+    //         setMultiTouchControls(false)
+    //         zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
+    //         // Disable scrolling and zooming
+    //         setScrollableAreaLimitDouble(null)
+    //         isFlingEnabled = false
+    //         // Disable horizontal and vertical scroll (prevents drag/pan)
+    //         isHorizontalMapRepetitionEnabled = false
+    //         isVerticalMapRepetitionEnabled = false
+    //         controller.setZoom(17.0)
+    //         // Default to UK center initially
+    //         controller.setCenter(GeoPoint(54.0, -2.0))
+            
+    //         // Override touch events to completely disable map interaction
+    //         // but still allow touches to pass through to the bottom sheet
+    //         overlays.add(0, object : org.osmdroid.views.overlay.Overlay() {
+    //             override fun onDoubleTap(
+    //                 e: android.view.MotionEvent?,
+    //                 pMapView: org.osmdroid.views.MapView?
+    //             ): Boolean {
+    //                 // Consume double-tap to prevent zoom
+    //                 return true
+    //             }
+                
+    //             override fun onScroll(
+    //                 pEvent1: android.view.MotionEvent?,
+    //                 pEvent2: android.view.MotionEvent?,
+    //                 pDistanceX: Float,
+    //                 pDistanceY: Float,
+    //                 pMapView: org.osmdroid.views.MapView?
+    //             ): Boolean {
+    //                 // Consume scroll to prevent pan
+    //                 return true
+    //             }
+                
+    //             override fun onFling(
+    //                 pEvent1: android.view.MotionEvent?,
+    //                 pEvent2: android.view.MotionEvent?,
+    //                 pVelocityX: Float,
+    //                 pVelocityY: Float,
+    //                 pMapView: org.osmdroid.views.MapView?
+    //             ): Boolean {
+    //                 // Consume fling to prevent pan
+    //                 return true
+    //             }
+    //         })
+    //     }
+        
+    //     // Create location marker
+    //     locationMarker = Marker(binding.mapView).apply {
+    //         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
+    //         icon = ContextCompat.getDrawable(this@MainActivity, R.drawable.location_dot)
+    //         title = "Current Location"
+    //     }
+    //     binding.mapView.overlays.add(locationMarker)
+    // }
     
     private fun setupBottomSheet() {
         bottomSheetBehavior = BottomSheetBehavior.from(binding.bottomSheet)
@@ -405,10 +494,10 @@ class MainActivity : AppCompatActivity() {
     }
     
     private fun updateMapLocation(lat: Double, lon: Double) {
-        val point = GeoPoint(lat, lon)
-        locationMarker?.position = point
-        binding.mapView.controller.animateTo(point)
-        binding.mapView.invalidate()
+//        val point = GeoPoint(lat, lon)
+//        locationMarker?.position = point
+        // binding.mapView.controller.animateTo(point)
+        // binding.mapView.invalidate()
     }
 
     @SuppressLint("MissingPermission")
@@ -542,12 +631,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        binding.mapView.onResume()
+        // binding.mapView.onResume()
     }
     
     override fun onPause() {
         super.onPause()
-        binding.mapView.onPause()
+        // binding.mapView.onPause()
     }
 
     override fun onDestroy() {

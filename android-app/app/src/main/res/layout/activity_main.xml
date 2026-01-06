@@ -8,10 +8,15 @@
     tools:context=".MainActivity">
 
     <!-- Full-screen Map View -->
-    <org.osmdroid.views.MapView
+    <fragment xmlns:android="http://schemas.android.com/apk/res/android"
+      android:name="com.google.android.libraries.navigation.SupportNavigationFragment"
+      android:id="@+id/navigation_fragment"
+      android:layout_width="match_parent"
+      android:layout_height="match_parent"/>
+    <!-- <org.osmdroid.views.MapView
         android:id="@+id/mapView"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent" /> -->
 
     <!-- Top Status Panel -->
     <LinearLayout

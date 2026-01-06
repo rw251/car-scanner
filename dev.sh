@@ -356,13 +356,31 @@ export_logs() {
     echo "📋 Exporting logs and data from device..."
     echo "========================================"
     
-    # Paths inside app's internal storage
-    # Use debug package name since dev.sh works with debug builds
-    local app_pkg="com.rw251.pleasecharge.debug"
-    local device_log_path="/data/data/$app_pkg/files/app_log.txt"
-    local device_csv_path="/data/data/$app_pkg/files/vehicle_data.csv"
-    local device_log_old="/data/data/$app_pkg/files/app_log.txt.old"
-    local device_csv_old="/data/data/$app_pkg/files/vehicle_data.csv.old"
+    # Try both debug and release packages
+    local debug_pkg="com.rw251.pleasecharge.debug"
+    local release_pkg="com.rw251.pleasecharge"
+    
+    # Check which package is installed and has data
+    local app_pkg=""
+    if $ADB shell pm list packages | grep -q "^package:$debug_pkg$"; then
+        if $ADB shell "run-as $debug_pkg test -d files && echo exists" 2>/dev/null | grep -q "exists"; then
+            app_pkg="$debug_pkg"
+            echo "📱 Using debug package: $debug_pkg"
+        fi
+    fi
+    
+    if [ -z "$app_pkg" ] && $ADB shell pm list packages | grep -q "^package:$release_pkg$"; then
+        if $ADB shell "run-as $release_pkg test -d files && echo exists" 2>/dev/null | grep -q "exists"; then
+            app_pkg="$release_pkg"
+            echo "📱 Using release package: $release_pkg"
+        fi
+    fi
+    
+    if [ -z "$app_pkg" ]; then
+        echo "❌ No app package found with data files"
+        echo "   Make sure the app has been launched at least once"
+        return 1
+    fi
 
     # Local output paths
     local out_dir="$ROOT_DIR/export"
@@ -373,33 +391,42 @@ export_logs() {
     local local_csv_old="$out_dir/vehicle_data.csv.old"
 
     echo "📂 Pulling files to $out_dir"
-    $ADB shell "run-as $app_pkg cat $device_log_path" > "$local_log" 2>/dev/null || true
-    $ADB shell "run-as $app_pkg cat $device_csv_path" > "$local_csv" 2>/dev/null || true
-    $ADB shell "run-as $app_pkg cat $device_log_old" > "$local_log_old" 2>/dev/null || true
-    $ADB shell "run-as $app_pkg cat $device_csv_old" > "$local_csv_old" 2>/dev/null || true
+    
+    # Use exec-out for more reliable binary-safe transfer
+    $ADB exec-out run-as "$app_pkg" cat files/app_log.txt > "$local_log" 2>/dev/null || rm -f "$local_log"
+    $ADB exec-out run-as "$app_pkg" cat files/vehicle_data.csv > "$local_csv" 2>/dev/null || rm -f "$local_csv"
+    $ADB exec-out run-as "$app_pkg" cat files/app_log.txt.old > "$local_log_old" 2>/dev/null || rm -f "$local_log_old"
+    $ADB exec-out run-as "$app_pkg" cat files/vehicle_data.csv.old > "$local_csv_old" 2>/dev/null || rm -f "$local_csv_old"
 
     echo ""
+    local found_any=false
     if [ -s "$local_log" ]; then
         echo "✅ App log exported: $local_log (size: $(du -h "$local_log" | cut -f1))"
+        found_any=true
     else
-        echo "⚠️  No app log found or empty"
-        rm -f "$local_log"
+        echo "⚠️  No app log found"
     fi
     if [ -s "$local_csv" ]; then
         echo "✅ CSV data exported: $local_csv (size: $(du -h "$local_csv" | cut -f1))"
+        found_any=true
     else
-        echo "⚠️  No CSV data found or empty"
-        rm -f "$local_csv"
+        echo "⚠️  No CSV data found"
     fi
     if [ -s "$local_log_old" ]; then
         echo "ℹ️  Old app log: $local_log_old (size: $(du -h "$local_log_old" | cut -f1))"
-    else
-        rm -f "$local_log_old"
+        found_any=true
     fi
     if [ -s "$local_csv_old" ]; then
         echo "ℹ️  Old CSV data: $local_csv_old (size: $(du -h "$local_csv_old" | cut -f1))"
-    else
-        rm -f "$local_csv_old"
+        found_any=true
+    fi
+    
+    if [ "$found_any" = false ]; then
+        echo ""
+        echo "💡 No files found. Possible reasons:"
+        echo "   • App was just installed and hasn't created files yet"
+        echo "   • App needs to be launched to initialize logging"
+        echo "   • Try running the app and then export again"
     fi
 
     echo ""
@@ -408,7 +435,7 @@ export_logs() {
     if [ -f "$local_log" ]; then
         tail -20 "$local_log"
     else
-        echo "(no log file)"
+        echo "(no log file - app may not have been launched yet)"
     fi
     return 0
 }

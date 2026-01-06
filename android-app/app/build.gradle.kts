@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.secrets.gradle.plugin)
 }
 
 android {
@@ -32,6 +33,7 @@ android {
         }
     }
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
@@ -44,9 +46,24 @@ android {
     }
 }
 
+configurations.all {
+    resolutionStrategy {
+        force("org.jetbrains.kotlin:kotlin-stdlib:2.0.21")
+        force("org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.0.21")
+        force("org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.0.21")
+        force("org.jetbrains.kotlin:kotlin-reflect:2.0.21")
+    }
+}
+
+secrets {
+    propertiesFileName = "secrets.properties"
+    defaultPropertiesFileName = "secrets.defaults.properties"
+}
+
 dependencies {
 
     implementation(libs.androidx.core.ktx)
+    coreLibraryDesugaring(libs.android.desugar.jdk.libs)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     implementation(libs.androidx.constraintlayout)
@@ -56,7 +73,11 @@ dependencies {
     implementation(libs.androidx.navigation.ui.ktx)
     implementation(libs.androidx.car.app)
     implementation(libs.google.play.services.location)
-    implementation(libs.osmdroid)
+    implementation(libs.google.navigation)
+    implementation(libs.google.places) {
+        // Navigation SDK already brings Google Maps classes; exclude the maps module from Places
+        exclude(group = "com.google.android.gms", module = "play-services-maps")
+    }
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
