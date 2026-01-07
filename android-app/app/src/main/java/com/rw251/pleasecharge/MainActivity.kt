@@ -3,6 +3,7 @@ package com.rw251.pleasecharge
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.graphics.Color
 import android.os.Bundle
 import android.view.View
 import android.widget.Toast
@@ -24,6 +25,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import androidx.core.graphics.toColorInt
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.libraries.navigation.NavigationApi
 import com.google.android.libraries.navigation.Navigator
@@ -127,6 +131,9 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Enable edge-to-edge drawing so we can control safe padding ourselves
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
         // Initialize logging and data capture
         AppLogger.init(this)
         DataCapture.init(this)
@@ -140,6 +147,29 @@ class MainActivity : AppCompatActivity() {
 
         // Without this you get a purple bar with the app name at the top
         supportActionBar?.hide()
+
+
+        // --- APPLY SAFE PADDING TO FRAGMENT CONTAINER (prevents overlap with status/nav bars) ---
+        // Make sure this is the container that hosts your SupportNavigationFragment.
+        val navContainer = findViewById<View>(R.id.navigation_fragment)
+        ViewCompat.setOnApplyWindowInsetsListener(navContainer) { view, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setBackgroundColor(Color.TRANSPARENT)
+            // Apply inset padding so child fragment/content is not obscured by system bars
+            view.setPadding(
+                systemBars.left,
+                systemBars.top,
+                systemBars.right,
+                systemBars.bottom
+            )
+
+            // If you prefer only top & bottom padding, uncomment below and comment the above:
+            // view.setPadding(0, systemBars.top, 0, systemBars.bottom)
+
+            insets
+        }
+        // Request an immediate apply of insets (useful if called before layout pass)
+        ViewCompat.requestApplyInsets(navContainer)
 
         // Start foreground service EARLY - ensures location tracking starts
         // regardless of permission state. It will wait for permissions but won't lose time.
