@@ -13,25 +13,23 @@
       android:id="@+id/navigation_fragment"
       android:layout_width="match_parent"
       android:layout_height="match_parent"/>
-    <!-- <org.osmdroid.views.MapView
-        android:id="@+id/mapView"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" /> -->
 
-    <!-- Route Planning Panel -->
+    <!-- Route Planning Panel (hidden by default, shown via toggle button) -->
     <LinearLayout
         android:id="@+id/routePlanningPanel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="top"
+        android:layout_gravity="center_horizontal|center_vertical"
         android:orientation="vertical"
         android:background="@color/white"
         android:paddingTop="16dp"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:paddingBottom="16dp"
-        android:elevation="4dp"
-        android:layout_marginTop="56dp">
+        android:elevation="6dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:visibility="gone">
 
         <!-- Origin Place Picker -->
         <LinearLayout
@@ -147,6 +145,48 @@
         </LinearLayout>
     </LinearLayout>
 
+    <!-- Map Overlay Controls -->
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="148dp"
+        android:padding="12dp">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/routeToggleButton"
+            style="@style/Widget.Material3.Button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Plan route"
+            android:textAllCaps="false"
+            android:textColor="@android:color/white"
+            android:paddingHorizontal="18dp"
+            android:paddingVertical="12dp"
+            app:cornerRadius="24dp"
+            app:iconPadding="8dp"
+            app:rippleColor="@color/teal_200"
+            android:elevation="6dp"
+            android:backgroundTint="#1E88E5" />
+
+        <TextView
+            android:id="@+id/navigationStatusChip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:background="@drawable/bottom_sheet_background"
+            android:text="Navigation running"
+            android:textSize="12sp"
+            android:textColor="#2196F3"
+            android:visibility="gone" />
+    </LinearLayout>
+
     <!-- Top Status Panel -->
     <LinearLayout
         android:id="@+id/topStatusPanel"
@@ -159,7 +199,8 @@
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:paddingBottom="16dp"
-        android:elevation="8dp">
+        android:elevation="8dp"
+        android:visibility="gone">
 
         <!-- BLE Status -->
         <TextView
@@ -206,7 +247,8 @@
         android:padding="16dp"
         app:layout_behavior="com.google.android.material.bottomsheet.BottomSheetBehavior"
         app:behavior_peekHeight="120dp"
-        app:behavior_hideable="false">
+        app:behavior_hideable="false"
+        android:visibility="gone">
 
         <!-- Drag Handle -->
         <View

@@ -29,6 +29,8 @@ import com.google.android.gms.maps.model.LatLng
 import com.google.android.libraries.navigation.NavigationApi
 import com.google.android.libraries.navigation.Navigator
 import com.google.android.libraries.navigation.RoutingOptions
+import com.google.android.libraries.navigation.RoadSnappedLocationProvider;
+import com.google.android.libraries.navigation.SimulationOptions;
 import com.google.android.libraries.navigation.Waypoint
 import kotlinx.coroutines.isActive
 import com.rw251.pleasecharge.BuildConfig
@@ -60,6 +62,9 @@ class MainActivity : AppCompatActivity() {
     private var originPlace: Place? = null
     private var destinationPlace: Place? = null
     private var currentLocation: LatLng? = null
+    private var originLatLng: LatLng? = null
+    private var navigationActive: Boolean = false
+    private var routePanelVisible: Boolean = false
     
     // Track current stats for display
     private var currentSocPct: Double? = null
@@ -67,6 +72,9 @@ class MainActivity : AppCompatActivity() {
     private var currentSpeedMph: Double? = null
     private var currentDistanceMiles: Double? = null
     private var journeyStartTime: Long? = null
+
+    private lateinit var mRoadSnappedLocationProvider: RoadSnappedLocationProvider
+    private lateinit var mLocationListener: RoadSnappedLocationProvider.LocationListener
 
     // Make navigator and routing options nullable as they're initialized later
     var mNavigator: Navigator? = null
@@ -302,6 +310,37 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
+    private fun toggleRoutePanel() {
+        routePanelVisible = !routePanelVisible
+        binding.routePlanningPanel.visibility = if (routePanelVisible) View.VISIBLE else View.GONE
+        if (routePanelVisible) {
+            binding.routeToggleButton.text = "Hide planner"
+        } else {
+            binding.routeToggleButton.text = if (navigationActive) "Stop navigation" else "Plan route"
+        }
+    }
+
+    private fun setNavigationActive(active: Boolean) {
+        navigationActive = active
+        binding.navigationStatusChip.visibility = if (active) View.VISIBLE else View.GONE
+        binding.routeToggleButton.text = if (active) "Stop navigation" else "Plan route"
+        if (active) {
+            binding.routePlanningPanel.visibility = View.GONE
+            routePanelVisible = false
+        }
+    }
+
+    private fun stopNavigation() {
+        try {
+            mNavigator?.stopGuidance()
+            mRoadSnappedLocationProvider?.removeLocationListener(mLocationListener);
+            AppLogger.i("Navigation stopped")
+        } catch (e: Exception) {
+            AppLogger.e("Failed to stop navigation", e)
+        }
+        setNavigationActive(false)
+    }
+
     fun navigateToPlace(destination: LatLng) {
         val navigator = mNavigator
         val routingOptions = mRoutingOptions
@@ -332,10 +371,21 @@ class MainActivity : AppCompatActivity() {
         pendingRoute.setOnResultListener { code ->
             when (code) {
                 Navigator.RouteStatus.OK -> {
+                    // Register some listeners for navigation events.
+                    registerNavigationListeners();
+
                     displayMessage("Route calculated successfully.")
+                    if (BuildConfig.DEBUG) {
+                        navigator
+                            .getSimulator()
+                            .simulateLocationsAlongExistingRoute(
+                                SimulationOptions().speedMultiplier(5f));
+                    }
                     // Start guidance
                     navigator.startGuidance()
                     displayMessage("Navigation started.")
+                    setNavigationActive(true)
+                    AppLogger.i("Navigation started")
                 }
                 Navigator.RouteStatus.NO_ROUTE_FOUND -> displayMessage("No route found.")
                 Navigator.RouteStatus.NETWORK_ERROR -> displayMessage("Network error while calculating route.")
@@ -345,6 +395,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+
+    fun registerNavigationListeners() {
+        val navigator = mNavigator ?: return
+
+        mRoadSnappedLocationProvider = NavigationApi.getRoadSnappedLocationProvider(application)!!
+
+        // Create and register location listener
+        mLocationListener = object : RoadSnappedLocationProvider.LocationListener {
+            override fun onLocationChanged(location: android.location.Location) {
+                // Update location in navigator
+                AppLogger.i("Navigator location update: lat=${location.latitude}, lon=${location.longitude}")
+            }
+        }
+        mRoadSnappedLocationProvider.addLocationListener(mLocationListener)
+    }
     // private fun setupMap() {
     //     binding.mapView.apply {
     //         setTileSource(TileSourceFactory.MAPNIK)
@@ -455,6 +520,18 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("MissingPermission")
     private fun setupUI() {
+        binding.routePlanningPanel.visibility = View.GONE
+        binding.navigationStatusChip.visibility = View.GONE
+        binding.routeToggleButton.text = "Plan route"
+
+        binding.routeToggleButton.setOnClickListener {
+            if (navigationActive) {
+                stopNavigation()
+            } else {
+                toggleRoutePanel()
+            }
+        }
+
         // Bottom sheet buttons
         binding.viewLogsButton.setOnClickListener {
             startActivity(Intent(this, LogViewerActivity::class.java))
@@ -631,11 +708,14 @@ class MainActivity : AppCompatActivity() {
             LocationTracker.metrics.collect { metrics ->
                 metrics?.let {
                     viewModel.setLocationStats(it.totalTripDistanceMiles, it.averageSpeedMph)
-                    // Update current location
+                    // Update current location and default origin
                     currentLocation = LatLng(it.lat, it.lon)
-                    // If origin not selected, update it to current location for route calculation
-                    if (originPlace == null && destinationPlace != null) {
-                        updateRoute()
+                    if (originPlace == null) {
+                        originLatLng = currentLocation
+                        originPlacePicker?.setText("Current location")
+                        if (destinationPlace != null) {
+                            updateRoute()
+                        }
                     }
                     // Update GPS status in top panel
                     val gpsStatus = "GPS: %.5f, %.5f".format(it.lat, it.lon)
@@ -765,6 +845,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         AppLogger.i("MainActivity destroyed")
+        stopNavigation()
         locationJob?.cancel()
         stopDurationTimer()
         LocationTracker.stop()
