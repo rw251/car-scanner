@@ -11,7 +11,6 @@ import androidx.activity.viewModels
 import androidx.annotation.RequiresPermission
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -29,15 +28,19 @@ import com.google.android.gms.maps.model.LatLng
 import com.google.android.libraries.navigation.NavigationApi
 import com.google.android.libraries.navigation.Navigator
 import com.google.android.libraries.navigation.RoutingOptions
-import com.google.android.libraries.navigation.RoadSnappedLocationProvider;
-import com.google.android.libraries.navigation.SimulationOptions;
+import com.google.android.libraries.navigation.RoadSnappedLocationProvider
+import com.google.android.libraries.navigation.SimulationOptions
+import com.google.android.libraries.navigation.CustomRoutesOptions
 import com.google.android.libraries.navigation.Waypoint
 import kotlinx.coroutines.isActive
-import com.rw251.pleasecharge.BuildConfig
 import com.google.android.libraries.places.api.Places
 import com.google.android.libraries.places.api.model.Place
 import com.google.android.libraries.places.widget.AutocompleteSupportFragment
-import com.google.android.libraries.places.api.net.FetchPlaceRequest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlin.math.roundToInt
 
 /**
@@ -72,6 +75,8 @@ class MainActivity : AppCompatActivity() {
     private var currentSpeedMph: Double? = null
     private var currentDistanceMiles: Double? = null
     private var journeyStartTime: Long? = null
+    private var currentRouteToken: String? = null
+    private var currentRoutePolyline: String? = null
 
     private lateinit var mRoadSnappedLocationProvider: RoadSnappedLocationProvider
     private lateinit var mLocationListener: RoadSnappedLocationProvider.LocationListener
@@ -170,7 +175,6 @@ class MainActivity : AppCompatActivity() {
                 when (errorCode) {
                     NavigationApi.ErrorCode.NOT_AUTHORIZED -> displayMessage("Error: Your API key is invalid or not authorized.")
                     NavigationApi.ErrorCode.TERMS_NOT_ACCEPTED -> displayMessage("Error: User did not accept the Navigation Terms of Use.")
-                    NavigationApi.ErrorCode.NETWORK_ERROR -> displayMessage("Error: Network error.")
                     NavigationApi.ErrorCode.LOCATION_PERMISSION_MISSING -> displayMessage("Error: Location permission is missing.")
                     else -> displayMessage("Error loading Navigation SDK: $errorCode")
                 }
@@ -198,7 +202,7 @@ class MainActivity : AppCompatActivity() {
             setOnPlaceSelectedListener(object : com.google.android.libraries.places.widget.listener.PlaceSelectionListener {
                 override fun onPlaceSelected(place: Place) {
                     originPlace = place
-                    AppLogger.i("Origin selected: ${place.name}")
+                    AppLogger.i("Origin selected: ${place.displayName}")
                     updateRoute()
                 }
 
@@ -213,7 +217,7 @@ class MainActivity : AppCompatActivity() {
             setOnPlaceSelectedListener(object : com.google.android.libraries.places.widget.listener.PlaceSelectionListener {
                 override fun onPlaceSelected(place: Place) {
                     destinationPlace = place
-                    AppLogger.i("Destination selected: ${place.name}")
+                    AppLogger.i("Destination selected: ${place.displayName}")
                     updateRoute()
                 }
 
@@ -225,45 +229,32 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateRoute() {
-        val origin = originPlace?.latLng ?: currentLocation
+        val origin = originLatLng ?: currentLocation
         val destination = destinationPlace?.latLng
+        AppLogger.i("updateRoute: origin=${origin?.latitude},${origin?.longitude} destination=${destination?.latitude},${destination?.longitude}")
 
         if (origin != null && destination != null) {
             calculateAndDisplayRoute(origin, destination)
+        } else {
+            AppLogger.w("updateRoute: Cannot update route - origin or destination null")
         }
     }
 
     private fun calculateAndDisplayRoute(origin: LatLng, destination: LatLng) {
+        AppLogger.i("calculateAndDisplayRoute started")
         lifecycleScope.launch {
             try {
-                // Calculate route using Navigation SDK
-                val navigator = mNavigator
-                val routingOptions = mRoutingOptions
-
-                if (navigator == null || routingOptions == null) {
-                    AppLogger.w("Navigator not ready for route calculation")
+                val routeResult = fetchRouteTokenAndPolyline(origin, destination)
+                if (routeResult == null) {
+                    AppLogger.w("Routes API returned no routes")
+                    binding.routeInfoPanel.visibility = View.GONE
                     return@launch
                 }
 
-                val waypoint = Waypoint.builder()
-                    .setTitle("Destination")
-                    .setLatLng(destination.latitude, destination.longitude)
-                    .build()
-
-                val pendingRoute = navigator.setDestination(waypoint, routingOptions)
-                pendingRoute.setOnResultListener { code ->
-                    when (code) {
-                        Navigator.RouteStatus.OK -> {
-                            // Get route info - navigator has the route calculated
-                            displayRouteInfo(origin, destination)
-                        }
-                        Navigator.RouteStatus.NO_ROUTE_FOUND -> {
-                            AppLogger.w("No route found")
-                            binding.routeInfoPanel.visibility = View.GONE
-                        }
-                        else -> AppLogger.e("Route calculation failed: $code")
-                    }
-                }
+                currentRouteToken = routeResult.first
+                currentRoutePolyline = routeResult.second
+                AppLogger.i("Route received: token=${currentRouteToken?.take(20)}... polyline=${currentRoutePolyline?.take(20)}...")
+                displayRouteInfo(origin, destination)
             } catch (e: Exception) {
                 AppLogger.e("Error calculating route", e)
             }
@@ -275,6 +266,7 @@ class MainActivity : AppCompatActivity() {
         val distance = haversineDistance(origin.latitude, origin.longitude, destination.latitude, destination.longitude)
         val durationHours = distance / 60.0 // Assume average 60 km/h
         val durationMinutes = (durationHours * 60).roundToInt()
+        AppLogger.i("displayRouteInfo: distance=%.1f km, duration=%d min".format(distance, durationMinutes))
 
         binding.routeDistance.text = String.format(Locale.getDefault(), "%.1f km", distance)
         binding.routeDuration.text = if (durationMinutes < 60) {
@@ -303,6 +295,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startNavigation(destination: LatLng) {
+        AppLogger.i("startNavigation: destination=${destination.latitude},${destination.longitude}")
         navigateToPlace(destination)
     }
 
@@ -333,7 +326,7 @@ class MainActivity : AppCompatActivity() {
     private fun stopNavigation() {
         try {
             mNavigator?.stopGuidance()
-            mRoadSnappedLocationProvider?.removeLocationListener(mLocationListener);
+            mRoadSnappedLocationProvider?.removeLocationListener(mLocationListener)
             AppLogger.i("Navigation stopped")
         } catch (e: Exception) {
             AppLogger.e("Failed to stop navigation", e)
@@ -342,16 +335,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun navigateToPlace(destination: LatLng) {
+        AppLogger.i("navigateToPlace called for ${destination.latitude},${destination.longitude}")
         val navigator = mNavigator
-        val routingOptions = mRoutingOptions
         
         if (navigator == null) {
+            AppLogger.e("navigateToPlace: Navigator not initialized")
             displayMessage("Navigator not initialized yet.")
-            return
-        }
-        
-        if (routingOptions == null) {
-            displayMessage("Routing options not set.")
             return
         }
 
@@ -366,20 +355,35 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        val routeToken = currentRouteToken
+        if (routeToken.isNullOrBlank()) {
+            AppLogger.w("navigateToPlace: Route token not ready")
+            displayMessage("Route not ready yet. Please retry.")
+            return
+        }
+        AppLogger.i("navigateToPlace: Using route token=${routeToken.take(20)}...")
+
+        val customRoutesOptions = CustomRoutesOptions.builder()
+            .setRouteToken(routeToken)
+            .setTravelMode(CustomRoutesOptions.TravelMode.DRIVING)
+            .build()
+
         // Set the destination and start navigation
-        val pendingRoute = navigator.setDestination(waypoint, routingOptions)
+        val pendingRoute = navigator.setDestinations(listOf(waypoint), customRoutesOptions)
         pendingRoute.setOnResultListener { code ->
             when (code) {
                 Navigator.RouteStatus.OK -> {
+                    AppLogger.i("navigateToPlace: RouteStatus.OK")
                     // Register some listeners for navigation events.
-                    registerNavigationListeners();
+                    registerNavigationListeners()
 
                     displayMessage("Route calculated successfully.")
                     if (BuildConfig.DEBUG) {
+                        AppLogger.i("navigateToPlace: Starting location simulation at 5x speed")
                         navigator
                             .getSimulator()
                             .simulateLocationsAlongExistingRoute(
-                                SimulationOptions().speedMultiplier(5f));
+                                SimulationOptions().speedMultiplier(5f))
                     }
                     // Start guidance
                     navigator.startGuidance()
@@ -387,18 +391,28 @@ class MainActivity : AppCompatActivity() {
                     setNavigationActive(true)
                     AppLogger.i("Navigation started")
                 }
-                Navigator.RouteStatus.NO_ROUTE_FOUND -> displayMessage("No route found.")
-                Navigator.RouteStatus.NETWORK_ERROR -> displayMessage("Network error while calculating route.")
-                Navigator.RouteStatus.ROUTE_CANCELED -> displayMessage("Route calculation canceled.")
-                else -> displayMessage("Error calculating route: $code")
+                Navigator.RouteStatus.NO_ROUTE_FOUND -> {
+                    AppLogger.w("navigateToPlace: No route found")
+                    displayMessage("No route found.")
+                }
+                Navigator.RouteStatus.NETWORK_ERROR -> {
+                    AppLogger.e("navigateToPlace: Network error while calculating route")
+                    displayMessage("Network error while calculating route.")
+                }
+                Navigator.RouteStatus.ROUTE_CANCELED -> {
+                    AppLogger.w("navigateToPlace: Route calculation canceled")
+                    displayMessage("Route calculation canceled.")
+                }
+                else -> {
+                    AppLogger.e("navigateToPlace: Error calculating route: $code")
+                    displayMessage("Error calculating route: $code")
+                }
             }
         }
     }
 
 
     fun registerNavigationListeners() {
-        val navigator = mNavigator ?: return
-
         mRoadSnappedLocationProvider = NavigationApi.getRoadSnappedLocationProvider(application)!!
 
         // Create and register location listener
@@ -409,6 +423,94 @@ class MainActivity : AppCompatActivity() {
             }
         }
         mRoadSnappedLocationProvider.addLocationListener(mLocationListener)
+    }
+
+    private suspend fun fetchRouteTokenAndPolyline(
+        origin: LatLng,
+        destination: LatLng
+    ): Pair<String?, String?>? = withContext(Dispatchers.IO) {
+        AppLogger.i("fetchRouteTokenAndPolyline: origin=${origin.latitude},${origin.longitude} dest=${destination.latitude},${destination.longitude}")
+        val url = URL("https://routes.googleapis.com/directions/v2:computeRoutes")
+        val connection = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("X-Goog-Api-Key", BuildConfig.NAVIGATOR_API_KEY)
+            setRequestProperty(
+                "X-Goog-FieldMask",
+                "routes.polyline.encodedPolyline,routes.routeToken"
+            )
+            setRequestProperty("X-Android-Package", "com.rw251.pleasecharge")
+            setRequestProperty("X-Android-Cert", BuildConfig.RELEASE_SHA1.replace(":", ""))
+            connectTimeout = 10000
+            readTimeout = 10000
+            doOutput = true
+        }
+        AppLogger.d("Routes API request prepared")      
+
+        val requestBody = JSONObject()
+            .put(
+                "origin",
+                JSONObject().put(
+                    "location",
+                    JSONObject().put(
+                        "latLng",
+                        JSONObject()
+                            .put("latitude", origin.latitude)
+                            .put("longitude", origin.longitude)
+                    )
+                )
+            )
+            .put(
+                "destination",
+                JSONObject().put(
+                    "location",
+                    JSONObject().put(
+                        "latLng",
+                        JSONObject()
+                            .put("latitude", destination.latitude)
+                            .put("longitude", destination.longitude)
+                    )
+                )
+            )
+            .put("travelMode", "DRIVE")
+            .put("routingPreference", "TRAFFIC_AWARE_OPTIMAL")
+            .toString()
+
+        connection.outputStream.use { output ->
+            output.write(requestBody.toByteArray(Charsets.UTF_8))
+        }
+
+        val responseCode = connection.responseCode
+        AppLogger.d("Routes API response code: $responseCode")
+        val responseBody = (if (responseCode in 200..299) {
+            connection.inputStream
+        } else {
+            connection.errorStream
+        })?.bufferedReader()?.use { it.readText() } ?: ""
+
+        if (responseCode !in 200..299) {
+            AppLogger.e("Routes API error $responseCode: $responseBody")
+            return@withContext null
+        }
+        AppLogger.d("Routes API success: response length=${responseBody.length}")
+
+        val json = JSONObject(responseBody)
+        val routes = json.optJSONArray("routes") ?: run {
+            AppLogger.w("fetchRouteTokenAndPolyline: No routes in response")
+            return@withContext null
+        }
+        if (routes.length() == 0) {
+            AppLogger.w("fetchRouteTokenAndPolyline: Routes array is empty")
+            return@withContext null
+        }
+        AppLogger.d("fetchRouteTokenAndPolyline: Found ${routes.length()} route(s)")
+
+        val route = routes.getJSONObject(0)
+        val routeToken = if (route.has("routeToken")) route.getString("routeToken") else null
+        val polyline = route.optJSONObject("polyline")?.optString("encodedPolyline", "")
+        AppLogger.i("fetchRouteTokenAndPolyline: Success - token present=${!routeToken.isNullOrEmpty()}, polyline length=${polyline?.length ?: 0}")
+
+        Pair(routeToken, polyline)
     }
     // private fun setupMap() {
     //     binding.mapView.apply {
