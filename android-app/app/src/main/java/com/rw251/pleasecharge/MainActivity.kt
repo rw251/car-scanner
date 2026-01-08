@@ -7,6 +7,8 @@ import android.graphics.Color
 import android.os.Bundle
 import android.view.View
 import android.widget.Toast
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.annotation.RequiresPermission
@@ -42,6 +44,9 @@ import com.google.android.libraries.places.api.model.Place
 import com.google.android.libraries.places.widget.AutocompleteSupportFragment
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -93,6 +98,20 @@ class MainActivity : AppCompatActivity() {
     private var journeyStartTime: Long? = null
     private var currentRouteToken: String? = null
     private var currentRoutePolyline: String? = null
+    private var chargerDistanceLimitMiles: Int = 250 // Default 250 miles from start
+
+    // Route polyline tracking
+    private var decodedRoutePath: List<LatLng> = emptyList()
+    private var routeCumulativeDistances: List<Double> = emptyList() // in meters
+    
+    // Store origin/destination for deviation calculations
+    private var routeOrigin: LatLng? = null
+    private var routeDestination: LatLng? = null
+    private var directRouteDurationSeconds: Long = 0
+    
+    // Charger list tracking
+    private var allChargingPoints: List<ChargingPoint> = emptyList()
+    private var currentLocationMeters: Double = 0.0 // Current distance along route in meters
 
     private lateinit var mRoadSnappedLocationProvider: RoadSnappedLocationProvider
     private lateinit var mLocationListener: RoadSnappedLocationProvider.LocationListener
@@ -125,7 +144,11 @@ class MainActivity : AppCompatActivity() {
         val operator: String = "Unknown",
         val status: String = "Unknown",
         val ccsPoints: Int = 0,
-        val type2Points: Int = 0
+        val type2Points: Int = 0,
+        var distanceAlongRoute: Double = 0.0, // meters from route start
+        var deviationSeconds: Long? = null, // additional time vs direct route
+        var routeToChargerSeconds: Long? = null,
+        var routeFromChargerSeconds: Long? = null
     )
     /**
      * Permission launcher for BLE and Location permissions.
@@ -325,6 +348,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun calculateAndDisplayRoute(origin: LatLng, destination: LatLng) {
         AppLogger.i("calculateAndDisplayRoute started")
+        // Store origin and destination for deviation calculations
+        routeOrigin = origin
+        routeDestination = destination
+        
         lifecycleScope.launch {
             try {
                 showRouteStatus("Getting route...")
@@ -338,9 +365,26 @@ class MainActivity : AppCompatActivity() {
 
                 currentRouteToken = routeResult.first
                 currentRoutePolyline = routeResult.second
-                AppLogger.i("Route received: token=${currentRouteToken?.take(20)}... polyline=${currentRoutePolyline?.take(20)}...")
+                directRouteDurationSeconds = routeResult.third ?: 0L
+                AppLogger.i("Route received: token=${currentRouteToken?.take(20)}... polyline=${currentRoutePolyline?.take(20)}... duration=${directRouteDurationSeconds}s")
+                
+                // Decode polyline for distance calculations
+                currentRoutePolyline?.let { polyline ->
+                    decodePolylineAndBuildDistances(polyline)
+                }
+                
+                // Now fetch charging points after directRouteDurationSeconds is set
+                showRouteStatus("Finding chargers...")
+                allChargingPoints = fetchChargingPoints(currentRoutePolyline, includeCCS = true, includeType2 = false)
+                // Sort chargers by distance along route
+                allChargingPoints = allChargingPoints.sortedBy { it.distanceAlongRoute }
+                AppLogger.i("Chargers fetched and sorted: ${allChargingPoints.size} total")
+                
                 showRouteStatus("Ready")
                 displayRouteInfo(origin, destination)
+                // Show charger list overlay
+                updateChargerListDisplay()
+                binding.chargerListOverlay.visibility = View.VISIBLE
                 // Hide status after a short delay
                 kotlinx.coroutines.delay(1500)
                 hideRouteStatus()
@@ -428,6 +472,9 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             AppLogger.e("Failed to stop navigation", e)
         }
+        // Clear chargers and hide list
+        allChargingPoints = emptyList()
+        binding.chargerListOverlay.visibility = View.GONE
         setNavigationActive(false)
     }
 
@@ -517,6 +564,12 @@ class MainActivity : AppCompatActivity() {
             override fun onLocationChanged(location: android.location.Location) {
                 // Update location in navigator
                 AppLogger.i("Navigator location update: lat=${location.latitude}, lon=${location.longitude}")
+                
+                // Update current position along route and charger list
+                if (navigationActive && allChargingPoints.isNotEmpty() && decodedRoutePath.isNotEmpty()) {
+                    currentLocationMeters = calculateDistanceAlongRoute(location.latitude, location.longitude)
+                    updateChargerListDisplay()
+                }
             }
         }
         mRoadSnappedLocationProvider.addLocationListener(mLocationListener)
@@ -525,7 +578,7 @@ class MainActivity : AppCompatActivity() {
     private suspend fun fetchRouteTokenAndPolyline(
         origin: LatLng,
         destination: LatLng
-    ): Pair<String?, String?>? = withContext(Dispatchers.IO) {
+    ): Triple<String?, String?, Long?>? = withContext(Dispatchers.IO) {
         AppLogger.i("fetchRouteTokenAndPolyline: origin=${origin.latitude},${origin.longitude} dest=${destination.latitude},${destination.longitude}")
         val url = URL("https://routes.googleapis.com/directions/v2:computeRoutes")
         val connection = (url.openConnection() as HttpURLConnection).apply {
@@ -534,7 +587,7 @@ class MainActivity : AppCompatActivity() {
             setRequestProperty("X-Goog-Api-Key", BuildConfig.NAVIGATOR_API_KEY)
             setRequestProperty(
                 "X-Goog-FieldMask",
-                "routes.polyline.encodedPolyline,routes.routeToken"
+                "routes.polyline.encodedPolyline,routes.routeToken,routes.duration"
             )
             setRequestProperty("X-Android-Package", "com.rw251.pleasecharge")
             setRequestProperty("X-Android-Cert", BuildConfig.RELEASE_SHA1.replace(":", ""))
@@ -605,14 +658,14 @@ class MainActivity : AppCompatActivity() {
         val route = routes.getJSONObject(0)
         val routeToken = if (route.has("routeToken")) route.getString("routeToken") else null
         val polyline = route.optJSONObject("polyline")?.optString("encodedPolyline", "")
-        AppLogger.i("fetchRouteTokenAndPolyline: Success - token present=${!routeToken.isNullOrEmpty()}, polyline length=${polyline?.length ?: 0}")
+        
+        // Extract duration in seconds using proper parsing
+        val durationString = route.optString("duration", "0s")
+        val durationSeconds = parseDurationToSeconds(durationString)
+        
+        AppLogger.i("fetchRouteTokenAndPolyline: Success - token present=${!routeToken.isNullOrEmpty()}, polyline length=${polyline?.length ?: 0}, duration=${durationSeconds}s")
 
-        withContext(Dispatchers.Main) {
-            showRouteStatus("Finding chargers...")
-        }
-        fetchChargingPoints(polyline, includeCCS = true, includeType2 = false)
-
-        Pair(routeToken, polyline)
+        Triple(routeToken, polyline, durationSeconds)
     }
 
     /**
@@ -722,6 +775,142 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * Decode polyline and build cumulative distance array
+     */
+    private fun decodePolylineAndBuildDistances(encodedPolyline: String) {
+        try {
+            val decoded = decodePolyline(encodedPolyline)
+            decodedRoutePath = decoded
+            
+            // Build cumulative distances
+            val cumulative = mutableListOf<Double>()
+            var totalDistance = 0.0
+            cumulative.add(0.0)
+            
+            for (i in 1 until decoded.size) {
+                val prev = decoded[i - 1]
+                val curr = decoded[i]
+                val segmentDist = haversineDistance(
+                    prev.latitude, prev.longitude,
+                    curr.latitude, curr.longitude
+                ) * 1000.0 // convert km to meters
+                totalDistance += segmentDist
+                cumulative.add(totalDistance)
+            }
+            
+            routeCumulativeDistances = cumulative
+            AppLogger.i("Decoded polyline: ${decoded.size} points, total distance: ${totalDistance / 1000.0} km")
+        } catch (e: Exception) {
+            AppLogger.e("Failed to decode polyline", e)
+            decodedRoutePath = emptyList()
+            routeCumulativeDistances = emptyList()
+        }
+    }
+
+    /**
+     * Truncate polyline to a maximum character length
+     * Safely truncates the encoded string to prevent HTTP 414 errors
+     */
+    private fun truncatePolyline(encodedPolyline: String, maxChars: Int = 6000): String {
+        if (encodedPolyline.length <= maxChars) {
+            return encodedPolyline
+        }
+        
+        // Simply truncate the encoded string at maxChars
+        // The polyline decoder will handle partial/truncated polylines gracefully
+        val truncated = encodedPolyline.substring(0, maxChars)
+        AppLogger.i("Truncated polyline from ${encodedPolyline.length} to ${truncated.length} chars to avoid HTTP 414")
+        return truncated
+    }
+
+    /**
+     * Decode Google polyline format
+     */
+    private fun decodePolyline(encoded: String): List<LatLng> {
+        val poly = mutableListOf<LatLng>()
+        var index = 0
+        val len = encoded.length
+        var lat = 0
+        var lng = 0
+
+        while (index < len) {
+            var b: Int
+            var shift = 0
+            var result = 0
+            do {
+                b = encoded[index++].code - 63
+                result = result or (b and 0x1f shl shift)
+                shift += 5
+            } while (b >= 0x20)
+            val dlat = if (result and 1 != 0) (result shr 1).inv() else result shr 1
+            lat += dlat
+
+            shift = 0
+            result = 0
+            do {
+                b = encoded[index++].code - 63
+                result = result or (b and 0x1f shl shift)
+                shift += 5
+            } while (b >= 0x20)
+            val dlng = if (result and 1 != 0) (result shr 1).inv() else result shr 1
+            lng += dlng
+
+            poly.add(LatLng(lat / 1E5, lng / 1E5))
+        }
+        return poly
+    }
+
+    /**
+     * Calculate distance along route to a given point (finds nearest route point)
+     */
+    private fun calculateDistanceAlongRoute(targetLat: Double, targetLng: Double): Double {
+        if (decodedRoutePath.isEmpty() || routeCumulativeDistances.isEmpty()) {
+            return 0.0
+        }
+
+        // Find the nearest route point to the target location
+        val nearestIdx = findNearestRoutePointIndex(targetLat, targetLng)
+        
+        // Return the cumulative distance at that point
+        return if (nearestIdx < routeCumulativeDistances.size) {
+            val distance = routeCumulativeDistances[nearestIdx]
+            AppLogger.d("calculateDistanceAlongRoute(${targetLat}, ${targetLng}): nearestIdx=$nearestIdx/${decodedRoutePath.size}, distance=${distance}m")
+            distance
+        } else {
+            0.0
+        }
+    }
+
+    /**
+     * Find the index of the nearest route point to the target location.
+     * This matches the JavaScript implementation's findNearestRouteIndex function.
+     */
+    private fun findNearestRoutePointIndex(targetLat: Double, targetLng: Double): Int {
+        if (decodedRoutePath.isEmpty()) {
+            return 0
+        }
+        
+        var nearestIdx = 0
+        var minDistMeters = Double.MAX_VALUE
+
+        for (i in decodedRoutePath.indices) {
+            val routePoint = decodedRoutePath[i]
+            // Use haversine distance in meters
+            val distMeters = haversineDistance(
+                targetLat, targetLng,
+                routePoint.latitude, routePoint.longitude
+            ) * 1000.0 // Convert km to meters
+            
+            if (distMeters < minDistMeters) {
+                minDistMeters = distMeters
+                nearestIdx = i
+            }
+        }
+
+        return nearestIdx
+    }
+
+    /**
      * Fetch charging points from OpenChargeMap API using the route polyline
      */
     suspend fun fetchChargingPoints(
@@ -738,10 +927,13 @@ class MainActivity : AppCompatActivity() {
                 return@withContext emptyList()
             }
 
+            // Truncate polyline to avoid HTTP 414 (Request URI Too Long) errors
+            val truncatedPolyline = polylineString?.let { truncatePolyline(it) } ?: polylineString
+
             val url = URL("https://api.openchargemap.io/v3/poi")
             val params = mutableMapOf(
                 "key" to apiKey,
-                "polyline" to polylineString,
+                "polyline" to truncatedPolyline,
                 "distance" to "0.4",
                 "maxresults" to "500",
                 "compact" to "true",
@@ -787,6 +979,8 @@ class MainActivity : AppCompatActivity() {
 
             val responseBody = connection.inputStream?.bufferedReader()?.use { it.readText() } ?: ""
             AppLogger.d("OpenChargeMap response length: ${responseBody.length}")
+            // log entire response body
+            AppLogger.d("OpenChargeMap reference data response: $responseBody")
 
             val array = org.json.JSONArray(responseBody)
             val chargingPoints = mutableListOf<ChargingPoint>()
@@ -831,10 +1025,179 @@ class MainActivity : AppCompatActivity() {
             }
 
             AppLogger.i("fetchChargingPoints: Received ${chargingPoints.size} charging points")
-            chargingPoints
+            
+            // Filter by distance along route
+            withContext(Dispatchers.Main) {
+                showRouteStatus("Filtering by distance...")
+            }
+            
+            val distanceLimitMeters = chargerDistanceLimitMiles * 1609.344 // miles to meters
+            val filteredByDistance = chargingPoints.filter { point ->
+                val distanceAlongRoute = calculateDistanceAlongRoute(point.latitude, point.longitude)
+                point.distanceAlongRoute = distanceAlongRoute
+                distanceAlongRoute <= distanceLimitMeters
+            }
+            
+            AppLogger.i("Filtered to ${filteredByDistance.size} chargers within $chargerDistanceLimitMiles miles of route start")
+            
+            // Calculate deviations
+            withContext(Dispatchers.Main) {
+                showRouteStatus("Calculating deviations (${filteredByDistance.size} chargers)...")
+            }
+            
+            val pointsWithDeviations = calculateDeviationsForChargers(filteredByDistance)
+            
+            // Log final results
+            AppLogger.i("=== CHARGER DEVIATION RESULTS ===")
+            AppLogger.i("Total chargers found: ${chargingPoints.size}")
+            AppLogger.i("Within $chargerDistanceLimitMiles miles: ${filteredByDistance.size}")
+            AppLogger.i("With calculated deviations: ${pointsWithDeviations.size}")
+            pointsWithDeviations.forEach { point ->
+                val devMinutes = (point.deviationSeconds ?: 0) / 60.0
+                AppLogger.i("  ${point.title}: ${point.distanceAlongRoute / 1609.344} mi along route, +${devMinutes.roundToInt()} min deviation")
+            }
+            
+            pointsWithDeviations
         } catch (e: Exception) {
             AppLogger.e("Error fetching charging points", e)
             emptyList()
+        }
+    }
+    
+    /**
+     * Calculate route deviations for charging points using Google Routes API
+     */
+    private suspend fun calculateDeviationsForChargers(chargers: List<ChargingPoint>): List<ChargingPoint> = withContext(Dispatchers.IO) {
+        val origin = routeOrigin
+        val destination = routeDestination
+        
+        if (origin == null || destination == null) {
+            AppLogger.w("Cannot calculate deviations: origin or destination not set")
+            return@withContext chargers
+        }
+        
+        val batchSize = 3 // Process 3 at a time to avoid rate limits
+        val results = mutableListOf<ChargingPoint>()
+        
+        for (i in chargers.indices step batchSize) {
+            val batch = chargers.subList(i, kotlin.math.min(i + batchSize, chargers.size))
+            
+            val batchResults = batch.map { point ->
+                async(Dispatchers.IO) {
+                    calculateChargerDeviation(origin, destination, point)
+                }
+            }.awaitAll()
+            
+            results.addAll(batchResults)
+            
+            // Update status
+            withContext(Dispatchers.Main) {
+                showRouteStatus("Calculating deviations (${results.size}/${chargers.size})...")
+            }
+            
+            // Small delay to avoid overwhelming the API
+            if (i + batchSize < chargers.size) {
+                delay(50)
+            }
+        }
+        
+        results
+    }
+    
+    /**
+     * Parse duration string in format "1h25m30s" to seconds
+     */
+    private fun parseDurationToSeconds(durationString: String): Long {
+        var total = 0L
+        val hoursMatch = Regex("""(\d+)h""").find(durationString)
+        val minutesMatch = Regex("""(\d+)m""").find(durationString)
+        val secondsMatch = Regex("""(\d+)s""").find(durationString)
+        
+        hoursMatch?.let { total += it.groupValues[1].toLongOrNull() ?: 0L * 3600 }
+        minutesMatch?.let { total += it.groupValues[1].toLongOrNull() ?: 0L * 60 }
+        secondsMatch?.let { total += it.groupValues[1].toLongOrNull() ?: 0L }
+        
+        return total
+    }
+
+    /**
+     * Calculate deviation for a single charger
+     */
+    private suspend fun calculateChargerDeviation(
+        origin: LatLng,
+        destination: LatLng,
+        charger: ChargingPoint
+    ): ChargingPoint = withContext(Dispatchers.IO) {
+        try {
+            val chargerLatLng = LatLng(charger.latitude, charger.longitude)
+            
+            // Make Routes API call with waypoint
+            val url = URL("https://routes.googleapis.com/directions/v2:computeRoutes")
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("X-Goog-Api-Key", BuildConfig.NAVIGATOR_API_KEY)
+                setRequestProperty("X-Goog-FieldMask", "routes.duration,routes.legs.duration")
+                setRequestProperty("X-Android-Package", "com.rw251.pleasecharge")
+                setRequestProperty("X-Android-Cert", BuildConfig.RELEASE_SHA1.replace(":", ""))
+                connectTimeout = 10000
+                readTimeout = 10000
+                doOutput = true
+            }
+            
+            val requestBody = JSONObject()
+                .put("origin", JSONObject().put("location", JSONObject().put("latLng", 
+                    JSONObject().put("latitude", origin.latitude).put("longitude", origin.longitude))))
+                .put("destination", JSONObject().put("location", JSONObject().put("latLng",
+                    JSONObject().put("latitude", destination.latitude).put("longitude", destination.longitude))))
+                .put("intermediates", org.json.JSONArray().put(
+                    JSONObject().put("location", JSONObject().put("latLng",
+                        JSONObject().put("latitude", charger.latitude).put("longitude", charger.longitude)))))
+                .put("travelMode", "DRIVE")
+                .put("routingPreference", "TRAFFIC_AWARE_OPTIMAL")
+                .toString()
+            
+            connection.outputStream.use { output ->
+                output.write(requestBody.toByteArray(Charsets.UTF_8))
+            }
+            
+            val responseCode = connection.responseCode
+            if (responseCode !in 200..299) {
+                AppLogger.w("Routes API error for charger ${charger.id}: $responseCode")
+                return@withContext charger
+            }
+            
+            val responseBody = connection.inputStream?.bufferedReader()?.use { it.readText() } ?: ""
+            val json = JSONObject(responseBody)
+            val routes = json.optJSONArray("routes")
+            
+            if (routes != null && routes.length() > 0) {
+                val route = routes.getJSONObject(0)
+                val legs = route.optJSONArray("legs")
+                
+                if (legs != null && legs.length() >= 2) {
+                    // Leg 0: origin to charger, Leg 1: charger to destination
+                    val leg0DurationString = legs.getJSONObject(0).optString("duration", "0s")
+                    val leg1DurationString = legs.getJSONObject(1).optString("duration", "0s")
+                    
+                    val leg0Duration = parseDurationToSeconds(leg0DurationString)
+                    val leg1Duration = parseDurationToSeconds(leg1DurationString)
+                    
+                    val totalWithCharger = leg0Duration + leg1Duration
+                    val deviation = totalWithCharger - directRouteDurationSeconds
+                    
+                    charger.routeToChargerSeconds = leg0Duration
+                    charger.routeFromChargerSeconds = leg1Duration
+                    charger.deviationSeconds = deviation
+                    
+                    AppLogger.d("Charger ${charger.id}: leg0=${leg0Duration}s, leg1=${leg1Duration}s, total=${totalWithCharger}s, direct=${directRouteDurationSeconds}s, deviation=${deviation}s")
+                }
+            }
+            
+            charger
+        } catch (e: Exception) {
+            AppLogger.e("Error calculating deviation for charger ${charger.id}", e)
+            charger
         }
     }
 
@@ -1086,6 +1449,60 @@ class MainActivity : AppCompatActivity() {
     }
     
     @SuppressLint("SetTextI18n")
+    private fun updateChargerListDisplay() {
+        // Find the next 3 chargers after current position
+        val nextChargers = allChargingPoints
+            .filter { it.distanceAlongRoute >= currentLocationMeters }
+            .take(3)
+        
+        // Debug logging
+        if (nextChargers.isNotEmpty()) {
+            AppLogger.d("updateChargerList: currentPos=${currentLocationMeters}m, showing ${nextChargers.size} of ${allChargingPoints.size} chargers")
+            nextChargers.forEachIndexed { idx, c ->
+                AppLogger.d("  [$idx] ${c.title}: ${c.distanceAlongRoute}m along route")
+            }
+        }
+        
+        // Update UI for each charger slot
+        updateChargerSlot(0, nextChargers, binding.charger1Container, binding.charger1Name, binding.charger1CCS, binding.charger1Deviation, binding.charger1Distance)
+        updateChargerSlot(1, nextChargers, binding.charger2Container, binding.charger2Name, binding.charger2CCS, binding.charger2Deviation, binding.charger2Distance)
+        updateChargerSlot(2, nextChargers, binding.charger3Container, binding.charger3Name, binding.charger3CCS, binding.charger3Deviation, binding.charger3Distance)
+    }
+    
+    @SuppressLint("SetTextI18n")
+    private fun updateChargerSlot(
+        index: Int,
+        chargers: List<ChargingPoint>,
+        container: LinearLayout,
+        nameText: TextView,
+        ccsText: TextView,
+        deviationText: TextView,
+        distanceText: TextView
+    ) {
+        if (index < chargers.size) {
+            val charger = chargers[index]
+            container.visibility = View.VISIBLE
+            
+            nameText.text = charger.title ?: "Unknown"
+            ccsText.text = charger.ccsPoints.toString()
+            
+            val deviationMinutes = (charger.deviationSeconds ?: 0) / 60
+            deviationText.text = if (deviationMinutes > 0) "+${deviationMinutes}m" else "${deviationMinutes}m"
+            
+            // Distance remaining to this charger
+            val remainingMeters = charger.distanceAlongRoute - currentLocationMeters
+            val remainingMiles = remainingMeters / 1609.344
+            val displayDistance = remainingMiles.coerceAtLeast(0.0)
+            distanceText.text = String.format(Locale.getDefault(), "%.1f mi", displayDistance)
+            
+            // Debug logging
+            AppLogger.d("Charger[$index] ${charger.title}: distAlongRoute=${charger.distanceAlongRoute}m, currentPos=${currentLocationMeters}m, remaining=${remainingMiles.toInt()}mi")
+        } else {
+            container.visibility = View.GONE
+        }
+    }
+    
+    @SuppressLint("SetTextI18n")
     private fun updateDistanceDisplay() {
         val dist = currentDistanceMiles
         binding.distanceValue.text = dist?.let { 
@@ -1113,6 +1530,10 @@ class MainActivity : AppCompatActivity() {
             while (isActive) {
                 kotlinx.coroutines.delay(1000)  // Update every second
                 updateDurationDisplay()
+                // Update charger distances every second for real-time feel
+                if (navigationActive && allChargingPoints.isNotEmpty()) {
+                    updateChargerListDisplay()
+                }
             }
         }
     }
@@ -1141,6 +1562,12 @@ class MainActivity : AppCompatActivity() {
                     // Update GPS status in top panel
                     val gpsStatus = "GPS: %.5f, %.5f".format(it.lat, it.lon)
                     viewModel.setGpsStatus(gpsStatus)
+                    
+                    // Update current position along route and charger list
+                    if (navigationActive && allChargingPoints.isNotEmpty() && decodedRoutePath.isNotEmpty()) {
+                        currentLocationMeters = calculateDistanceAlongRoute(it.lat, it.lon)
+                        updateChargerListDisplay()
+                    }
                 }
             }
         }

@@ -508,4 +508,288 @@
 
       </androidx.coordinatorlayout.widget.CoordinatorLayout>
 
+      <!-- Next 3 Chargers List Overlay -->
+      <LinearLayout
+          android:id="@+id/chargerListOverlay"
+          android:layout_width="match_parent"
+          android:layout_height="wrap_content"
+          android:layout_gravity="bottom|start"
+          android:orientation="vertical"
+          android:background="@drawable/simple_background"
+          android:paddingStart="12dp"
+          android:paddingEnd="12dp"
+          android:paddingTop="12dp"
+          android:paddingBottom="2dp"
+          android:elevation="8dp"
+          android:visibility="gone"
+          android:layout_marginStart="0dp"
+          android:layout_marginEnd="0dp"
+          android:layout_marginBottom="0dp">
+
+          <TextView
+              android:layout_width="wrap_content"
+              android:layout_height="wrap_content"
+              android:text="Next Chargers"
+              android:textSize="14sp"
+              android:textStyle="bold"
+              android:textColor="#212121"
+              android:layout_marginBottom="8dp" />
+
+          <!-- Charger 1 -->
+          <LinearLayout
+              android:id="@+id/charger1Container"
+              android:layout_width="match_parent"
+              android:layout_height="wrap_content"
+              android:orientation="vertical"
+              android:padding="8dp"
+              android:background="@drawable/charger_item_background"
+              android:layout_marginBottom="6dp">
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:orientation="horizontal"
+                  android:gravity="center_vertical">
+
+                  <LinearLayout
+                      android:layout_width="0dp"
+                      android:layout_height="wrap_content"
+                      android:layout_weight="1"
+                      android:orientation="vertical">
+
+                      <TextView
+                          android:id="@+id/charger1Name"
+                          android:layout_width="wrap_content"
+                          android:layout_height="wrap_content"
+                          android:text="--"
+                          android:textSize="12sp"
+                          android:textStyle="bold"
+                          android:textColor="#212121"
+                          android:maxLines="1"
+                          android:ellipsize="end" />
+
+                      <LinearLayout
+                          android:layout_width="wrap_content"
+                          android:layout_height="wrap_content"
+                          android:orientation="horizontal"
+                          android:layout_marginTop="2dp">
+
+                          <TextView
+                              android:layout_width="wrap_content"
+                              android:layout_height="wrap_content"
+                              android:text="CCS: "
+                              android:textSize="11sp"
+                              android:textColor="#666666" />
+
+                          <TextView
+                              android:id="@+id/charger1CCS"
+                              android:layout_width="wrap_content"
+                              android:layout_height="wrap_content"
+                              android:text="--"
+                              android:textSize="11sp"
+                              android:textStyle="bold"
+                              android:textColor="#666666"
+                              android:layout_marginEnd="12dp" />
+
+                          <TextView
+                              android:layout_width="wrap_content"
+                              android:layout_height="wrap_content"
+                              android:text="Deviation: "
+                              android:textSize="11sp"
+                              android:textColor="#666666" />
+
+                          <TextView
+                              android:id="@+id/charger1Deviation"
+                              android:layout_width="wrap_content"
+                              android:layout_height="wrap_content"
+                              android:text="--"
+                              android:textSize="11sp"
+                              android:textStyle="bold"
+                              android:textColor="#666666" />
+                      </LinearLayout>
+                  </LinearLayout>
+
+                  <TextView
+                      android:id="@+id/charger1Distance"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:text="--"
+                      android:textSize="13sp"
+                      android:textStyle="bold"
+                      android:textColor="#2196F3"
+                      android:layout_marginStart="8dp" />
+              </LinearLayout>
+          </LinearLayout>
+
+          <!-- Charger 2 -->
+          <LinearLayout
+              android:id="@+id/charger2Container"
+              android:layout_width="match_parent"
+              android:layout_height="wrap_content"
+              android:orientation="vertical"
+              android:padding="8dp"
+              android:background="@drawable/charger_item_background"
+              android:layout_marginBottom="6dp">
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:orientation="horizontal"
+                  android:gravity="center_vertical">
+
+                  <LinearLayout
+                      android:layout_width="0dp"
+                      android:layout_height="wrap_content"
+                      android:layout_weight="1"
+                      android:orientation="vertical">
+
+                      <TextView
+                          android:id="@+id/charger2Name"
+                          android:layout_width="wrap_content"
+                          android:layout_height="wrap_content"
+                          android:text="--"
+                          android:textSize="12sp"
+                          android:textStyle="bold"
+                          android:textColor="#212121"
+                          android:maxLines="1"
+                          android:ellipsize="end" />
+
+                      <LinearLayout
+                          android:layout_width="wrap_content"
+                          android:layout_height="wrap_content"
+                          android:orientation="horizontal"
+                          android:layout_marginTop="2dp">
+
+                          <TextView
+                              android:layout_width="wrap_content"
+                              android:layout_height="wrap_content"
+                              android:text="CCS: "
+                              android:textSize="11sp"
+                              android:textColor="#666666" />
+
+                          <TextView
+                              android:id="@+id/charger2CCS"
+                              android:layout_width="wrap_content"
+                              android:layout_height="wrap_content"
+                              android:text="--"
+                              android:textSize="11sp"
+                              android:textStyle="bold"
+                              android:textColor="#666666"
+                              android:layout_marginEnd="12dp" />
+
+                          <TextView
+                              android:layout_width="wrap_content"
+                              android:layout_height="wrap_content"
+                              android:text="Deviation: "
+                              android:textSize="11sp"
+                              android:textColor="#666666" />
+
+                          <TextView
+                              android:id="@+id/charger2Deviation"
+                              android:layout_width="wrap_content"
+                              android:layout_height="wrap_content"
+                              android:text="--"
+                              android:textSize="11sp"
+                              android:textStyle="bold"
+                              android:textColor="#666666" />
+                      </LinearLayout>
+                  </LinearLayout>
+
+                  <TextView
+                      android:id="@+id/charger2Distance"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:text="--"
+                      android:textSize="13sp"
+                      android:textStyle="bold"
+                      android:textColor="#2196F3"
+                      android:layout_marginStart="8dp" />
+              </LinearLayout>
+          </LinearLayout>
+
+          <!-- Charger 3 -->
+          <LinearLayout
+              android:id="@+id/charger3Container"
+              android:layout_width="match_parent"
+              android:layout_height="wrap_content"
+              android:orientation="vertical"
+              android:padding="8dp"
+              android:background="@drawable/charger_item_background">
+
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:orientation="horizontal"
+                  android:gravity="center_vertical">
+
+                  <LinearLayout
+                      android:layout_width="0dp"
+                      android:layout_height="wrap_content"
+                      android:layout_weight="1"
+                      android:orientation="vertical">
+
+                      <TextView
+                          android:id="@+id/charger3Name"
+                          android:layout_width="wrap_content"
+                          android:layout_height="wrap_content"
+                          android:text="--"
+                          android:textSize="12sp"
+                          android:textStyle="bold"
+                          android:textColor="#212121"
+                          android:maxLines="1"
+                          android:ellipsize="end" />
+
+                      <LinearLayout
+                          android:layout_width="wrap_content"
+                          android:layout_height="wrap_content"
+                          android:orientation="horizontal"
+                          android:layout_marginTop="2dp">
+
+                          <TextView
+                              android:layout_width="wrap_content"
+                              android:layout_height="wrap_content"
+                              android:text="CCS: "
+                              android:textSize="11sp"
+                              android:textColor="#666666" />
+
+                          <TextView
+                              android:id="@+id/charger3CCS"
+                              android:layout_width="wrap_content"
+                              android:layout_height="wrap_content"
+                              android:text="--"
+                              android:textSize="11sp"
+                              android:textStyle="bold"
+                              android:textColor="#666666"
+                              android:layout_marginEnd="12dp" />
+
+                          <TextView
+                              android:layout_width="wrap_content"
+                              android:layout_height="wrap_content"
+                              android:text="Deviation: "
+                              android:textSize="11sp"
+                              android:textColor="#666666" />
+
+                          <TextView
+                              android:id="@+id/charger3Deviation"
+                              android:layout_width="wrap_content"
+                              android:layout_height="wrap_content"
+                              android:text="--"
+                              android:textSize="11sp"
+                              android:textStyle="bold"
+                              android:textColor="#666666" />
+                      </LinearLayout>
+                  </LinearLayout>
+
+                  <TextView
+                      android:id="@+id/charger3Distance"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:text="--"
+                      android:textSize="13sp"
+                      android:textStyle="bold"
+                      android:textColor="#2196F3"
+                      android:layout_marginStart="8dp" />
+              </LinearLayout>
+          </LinearLayout>
+      </LinearLayout>
 </LinearLayout>
