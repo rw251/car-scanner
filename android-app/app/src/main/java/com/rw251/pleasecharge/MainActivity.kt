@@ -47,6 +47,18 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.math.roundToInt
 
+// Extension function to convert JSONObject to Map
+fun JSONObject.toMap(): Map<String, Any> {
+    val map = mutableMapOf<String, Any>()
+    keys().forEach { key ->
+        val value = opt(key)
+        if (value != null && value != JSONObject.NULL) {
+            map[key] = value
+        }
+    }
+    return map
+}
+
 /**
  * Full-screen map activity with collapsible stats overlay.
  * - Full-screen OSM map with current location marker
@@ -88,6 +100,33 @@ class MainActivity : AppCompatActivity() {
     // Make navigator and routing options nullable as they're initialized later
     var mNavigator: Navigator? = null
     var mRoutingOptions: RoutingOptions? = null
+    
+    // OpenChargeMap reference data
+    private var openChargeMapRefData: OpenChargeMapReferenceData? = null
+    private data class OpenChargeMapReferenceData(
+        val connectionTypes: List<Map<String, Any>> = emptyList(),
+        val operators: List<Map<String, Any>> = emptyList(),
+        val statusTypes: List<Map<String, Any>> = emptyList(),
+        val countries: List<Map<String, Any>> = emptyList(),
+        val usageTypes: List<Map<String, Any>> = emptyList(),
+        val chargerTypes: List<Map<String, Any>> = emptyList(),
+        val currentTypes: List<Map<String, Any>> = emptyList(),
+        val powerLevels: List<Map<String, Any>> = emptyList()
+    )
+    
+    data class ChargingPoint(
+        val id: Int,
+        val title: String?,
+        val latitude: Double,
+        val longitude: Double,
+        val operatorId: Int?,
+        val statusTypeId: Int?,
+        val connections: List<Map<String, Any>> = emptyList(),
+        val operator: String = "Unknown",
+        val status: String = "Unknown",
+        val ccsPoints: Int = 0,
+        val type2Points: Int = 0
+    )
     /**
      * Permission launcher for BLE and Location permissions.
      * Only called if permissions are not already granted.
@@ -151,14 +190,14 @@ class MainActivity : AppCompatActivity() {
 
         // --- APPLY SAFE PADDING TO FRAGMENT CONTAINER (prevents overlap with status/nav bars) ---
         // Make sure this is the container that hosts your SupportNavigationFragment.
-        val navContainer = findViewById<View>(R.id.navigation_fragment)
+        val navContainer = findViewById<View>(R.id.mainLayout)
         ViewCompat.setOnApplyWindowInsetsListener(navContainer) { view, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             view.setBackgroundColor(Color.TRANSPARENT)
             // Apply inset padding so child fragment/content is not obscured by system bars
             view.setPadding(
                 systemBars.left,
-                systemBars.top,
+                0,
                 systemBars.right,
                 systemBars.bottom
             )
@@ -177,6 +216,7 @@ class MainActivity : AppCompatActivity() {
 
         initializeNavigator()
         initializePlacePickers()
+        loadOpenChargeMapReferenceData()
         setupBottomSheet()
         setupUI()
         observeViewModel()
@@ -356,7 +396,9 @@ class MainActivity : AppCompatActivity() {
     private fun stopNavigation() {
         try {
             mNavigator?.stopGuidance()
-            mRoadSnappedLocationProvider?.removeLocationListener(mLocationListener)
+            if(mRoadSnappedLocationProvider != null) {
+              mRoadSnappedLocationProvider.removeLocationListener(mLocationListener)
+            }
             AppLogger.i("Navigation stopped")
         } catch (e: Exception) {
             AppLogger.e("Failed to stop navigation", e)
@@ -540,8 +582,234 @@ class MainActivity : AppCompatActivity() {
         val polyline = route.optJSONObject("polyline")?.optString("encodedPolyline", "")
         AppLogger.i("fetchRouteTokenAndPolyline: Success - token present=${!routeToken.isNullOrEmpty()}, polyline length=${polyline?.length ?: 0}")
 
+        fetchChargingPoints(polyline, includeCCS = true, includeType2 = false)
+
         Pair(routeToken, polyline)
     }
+
+    /**
+     * Get operator name by ID from OpenChargeMap reference data
+     */
+    private fun getOperatorName(operatorId: Int?): String {
+        if (operatorId == null) return "Unknown"
+        return openChargeMapRefData?.operators?.find { 
+            (it["ID"] as? Int) == operatorId 
+        }?.let { 
+            it["Title"] as? String ?: "Unknown"
+        } ?: "Unknown"
+    }
+
+    /**
+     * Get status type by ID from OpenChargeMap reference data
+     */
+    private fun getStatusType(statusTypeId: Int?): String {
+        if (statusTypeId == null) return "Unknown"
+        return openChargeMapRefData?.statusTypes?.find { 
+            (it["ID"] as? Int) == statusTypeId 
+        }?.let { 
+            it["Title"] as? String ?: "Unknown"
+        } ?: "Unknown"
+    }
+
+    /**
+     * Load reference data from OpenChargeMap API
+     * This helps hydrate the compact response from later API calls
+     */
+    private fun loadOpenChargeMapReferenceData() {
+        lifecycleScope.launch {
+            try {
+                AppLogger.i("Loading OpenChargeMap reference data...")
+                val apiKey = BuildConfig.OPEN_CHARGE_MAP_API_KEY
+                if (apiKey.isEmpty()) {
+                    AppLogger.w("OpenChargeMap API key not configured in BuildConfig")
+                    return@launch
+                }
+
+                val refData = withContext(Dispatchers.IO) {
+                    val url = URL("https://api.openchargemap.io/v3/referencedata")
+                    val params = mapOf("key" to apiKey)
+                    val urlWithParams = "$url?${params.entries.joinToString("&") { "${it.key}=${it.value}" }}"
+                    
+                    val connection = (URL(urlWithParams).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"
+                        connectTimeout = 10000
+                        readTimeout = 10000
+                    }
+
+                    val responseCode = connection.responseCode
+                    if (responseCode !in 200..299) {
+                        AppLogger.e("OpenChargeMap reference data API error: $responseCode")
+                        return@withContext null
+                    }
+
+                    val responseBody = connection.inputStream?.bufferedReader()?.use { it.readText() } ?: ""
+                    if (responseBody.contains("REJECTED_APIKEY_INVALID")) {
+                        AppLogger.e("OpenChargeMap API key invalid")
+                        return@withContext null
+                    }
+
+                    val json = JSONObject(responseBody)
+                    OpenChargeMapReferenceData(
+                        connectionTypes = parseJsonArray(json.optJSONArray("ConnectionTypes")),
+                        operators = parseJsonArray(json.optJSONArray("Operators")),
+                        statusTypes = parseJsonArray(json.optJSONArray("StatusTypes")),
+                        countries = parseJsonArray(json.optJSONArray("Countries")),
+                        usageTypes = parseJsonArray(json.optJSONArray("UsageTypes")),
+                        chargerTypes = parseJsonArray(json.optJSONArray("ChargerTypes")),
+                        currentTypes = parseJsonArray(json.optJSONArray("CurrentTypes")),
+                        powerLevels = parseJsonArray(json.optJSONArray("PowerLevels"))
+                    )
+                }
+
+                if (refData != null) {
+                    openChargeMapRefData = refData
+                    AppLogger.i("OpenChargeMap reference data loaded successfully")
+                } else {
+                    AppLogger.w("Failed to load OpenChargeMap reference data")
+                }
+            } catch (e: Exception) {
+                AppLogger.e("Error loading OpenChargeMap reference data", e)
+            }
+        }
+    }
+
+    /**
+     * Helper to parse JSON array to list of maps
+     */
+    private fun parseJsonArray(array: org.json.JSONArray?): List<Map<String, Any>> {
+        if (array == null) return emptyList()
+        val result = mutableListOf<Map<String, Any>>()
+        for (i in 0 until array.length()) {
+            val obj = array.optJSONObject(i) ?: continue
+            val map = mutableMapOf<String, Any>()
+            obj.keys().forEach { key ->
+                val value = obj.opt(key)
+                if (value != null && value != JSONObject.NULL) {
+                    map[key] = value
+                }
+            }
+            if (map.isNotEmpty()) result.add(map)
+        }
+        return result
+    }
+
+    /**
+     * Fetch charging points from OpenChargeMap API using the route polyline
+     */
+    suspend fun fetchChargingPoints(
+        polylineString: String?,
+        includeCCS: Boolean = true,
+        includeType2: Boolean = false
+    ): List<ChargingPoint> = withContext(Dispatchers.IO) {
+        AppLogger.i("fetchChargingPoints: polyline length=${polylineString?.length}, CCS=$includeCCS, Type2=$includeType2")
+
+        try {
+            val apiKey = BuildConfig.OPEN_CHARGE_MAP_API_KEY
+            if (apiKey.isEmpty()) {
+                AppLogger.w("OpenChargeMap API key not configured")
+                return@withContext emptyList()
+            }
+
+            val url = URL("https://api.openchargemap.io/v3/poi")
+            val params = mutableMapOf(
+                "key" to apiKey,
+                "polyline" to polylineString,
+                "distance" to "0.4",
+                "maxresults" to "500",
+                "compact" to "true",
+                "verbose" to "false"
+            )
+
+            // Build connector type filters
+            val ccsIds = mutableListOf<Int>()
+            val type2Ids = mutableListOf<Int>()
+            openChargeMapRefData?.connectionTypes?.forEach { ct ->
+                val title = (ct["Title"] as? String ?: "").lowercase()
+                val id = ct["ID"] as? Int ?: return@forEach
+                when {
+                    title.contains("ccs") -> ccsIds.add(id)
+                    title.contains("type 2") -> type2Ids.add(id)
+                }
+            }
+
+            val connectorIds = mutableListOf<Int>()
+            if (includeCCS) connectorIds.addAll(ccsIds)
+            if (includeType2) connectorIds.addAll(type2Ids)
+
+            if (connectorIds.isNotEmpty()) {
+                params["connectiontypeid"] = connectorIds.distinct().joinToString(",")
+            } else {
+                AppLogger.w("fetchChargingPoints: No connector filters enabled")
+            }
+
+            val urlWithParams = "$url?${params.entries.joinToString("&") { "${it.key}=${java.net.URLEncoder.encode(it.value, "UTF-8")}" }}"
+            val connection = (URL(urlWithParams).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 10000
+                readTimeout = 10000
+            }
+
+            val responseCode = connection.responseCode
+            AppLogger.d("OpenChargeMap API response code: $responseCode")
+
+            if (responseCode !in 200..299) {
+                AppLogger.e("OpenChargeMap API error: $responseCode")
+                return@withContext emptyList()
+            }
+
+            val responseBody = connection.inputStream?.bufferedReader()?.use { it.readText() } ?: ""
+            AppLogger.d("OpenChargeMap response length: ${responseBody.length}")
+
+            val array = org.json.JSONArray(responseBody)
+            val chargingPoints = mutableListOf<ChargingPoint>()
+
+            for (i in 0 until array.length()) {
+                val pointJson = array.optJSONObject(i) ?: continue
+                
+                val addressInfo = pointJson.optJSONObject("AddressInfo") ?: JSONObject()
+                val connections = mutableListOf<Map<String, Any>>()
+                pointJson.optJSONArray("Connections")?.let { connArray ->
+                    for (j in 0 until connArray.length()) {
+                        connArray.optJSONObject(j)?.let { connJson ->
+                            connections.add(connJson.toMap())
+                        }
+                    }
+                }
+
+                // Calculate CCS and Type2 points
+                val ccsPoints = connections
+                    .filter { (it["ConnectionTypeID"] as? Int) in ccsIds }
+                    .sumOf { (it["Quantity"] as? Int) ?: 1 }
+
+                val type2Points = connections
+                    .filter { (it["ConnectionTypeID"] as? Int) in type2Ids }
+                    .sumOf { (it["Quantity"] as? Int) ?: 1 }
+
+                val point = ChargingPoint(
+                    id = pointJson.optInt("ID", 0),
+                    title = addressInfo.optString("Title"),
+                    latitude = addressInfo.optDouble("Latitude", 0.0),
+                    longitude = addressInfo.optDouble("Longitude", 0.0),
+                    operatorId = pointJson.optInt("OperatorID", 0).takeIf { it != 0 },
+                    statusTypeId = pointJson.optInt("StatusTypeID", 0).takeIf { it != 0 },
+                    connections = connections,
+                    operator = getOperatorName(pointJson.optInt("OperatorID", 0).takeIf { it != 0 }),
+                    status = getStatusType(pointJson.optInt("StatusTypeID", 0).takeIf { it != 0 }),
+                    ccsPoints = ccsPoints,
+                    type2Points = type2Points
+                )
+                
+                chargingPoints.add(point)
+            }
+
+            AppLogger.i("fetchChargingPoints: Received ${chargingPoints.size} charging points")
+            chargingPoints
+        } catch (e: Exception) {
+            AppLogger.e("Error fetching charging points", e)
+            emptyList()
+        }
+    }
+
     // private fun setupMap() {
     //     binding.mapView.apply {
     //         setTileSource(TileSourceFactory.MAPNIK)

@@ -1,191 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.coordinatorlayout.widget.CoordinatorLayout
+<LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/mainLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:orientation="vertical"
     tools:context=".MainActivity">
-
-    <!-- Full-screen Map View -->
-    <fragment xmlns:android="http://schemas.android.com/apk/res/android"
-      android:name="com.google.android.libraries.navigation.SupportNavigationFragment"
-      android:id="@+id/navigation_fragment"
-      android:layout_width="match_parent"
-      android:layout_height="match_parent"/>
-
-    <!-- Route Planning Panel (hidden by default, shown via toggle button) -->
-    <LinearLayout
-        android:id="@+id/routePlanningPanel"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center_horizontal|center_vertical"
-        android:orientation="vertical"
-        android:background="@color/white"
-        android:paddingTop="16dp"
-        android:paddingStart="16dp"
-        android:paddingEnd="16dp"
-        android:paddingBottom="16dp"
-        android:elevation="6dp"
-        android:layout_marginStart="16dp"
-        android:layout_marginEnd="16dp"
-        android:visibility="gone">
-
-        <!-- Origin Place Picker -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:layout_marginBottom="12dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Starting Location"
-                android:textSize="12sp"
-                android:textColor="#666666"
-                android:layout_marginBottom="4dp" />
-
-            <fragment
-                android:name="com.google.android.libraries.places.widget.AutocompleteSupportFragment"
-                android:id="@+id/originPlacePickerFragment"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content" />
-        </LinearLayout>
-
-        <!-- Destination Place Picker -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:layout_marginBottom="12dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Destination"
-                android:textSize="12sp"
-                android:textColor="#666666"
-                android:layout_marginBottom="4dp" />
-
-            <fragment
-                android:name="com.google.android.libraries.places.widget.AutocompleteSupportFragment"
-                android:id="@+id/destinationPlacePickerFragment"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content" />
-        </LinearLayout>
-
-        <!-- Route Info and Navigation Button -->
-        <LinearLayout
-            android:id="@+id/routeInfoPanel"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="@drawable/bottom_sheet_background"
-            android:padding="12dp"
-            android:visibility="gone">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Distance"
-                        android:textSize="12sp"
-                        android:textColor="#999999" />
-
-                    <TextView
-                        android:id="@+id/routeDistance"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="--"
-                        android:textSize="16sp"
-                        android:textStyle="bold" />
-                </LinearLayout>
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Duration"
-                        android:textSize="12sp"
-                        android:textColor="#999999" />
-
-                    <TextView
-                        android:id="@+id/routeDuration"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="--"
-                        android:textSize="16sp"
-                        android:textStyle="bold" />
-                </LinearLayout>
-
-                <Button
-                    android:id="@+id/startNavigationButton"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Start"
-                    android:paddingHorizontal="24dp" />
-            </LinearLayout>
-        </LinearLayout>
-    </LinearLayout>
-
-    <!-- Map Overlay Controls -->
-    <LinearLayout
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:layout_gravity="bottom|end"
-        android:layout_marginEnd="16dp"
-        android:layout_marginBottom="148dp"
-        android:padding="12dp">
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/routeToggleButton"
-            style="@style/Widget.Material3.Button"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Plan route"
-            android:textAllCaps="false"
-            android:textColor="@android:color/white"
-            android:paddingHorizontal="18dp"
-            android:paddingVertical="12dp"
-            app:cornerRadius="24dp"
-            app:iconPadding="8dp"
-            app:rippleColor="@color/teal_200"
-            android:elevation="6dp"
-            android:backgroundTint="#1E88E5" />
-
-        <TextView
-            android:id="@+id/navigationStatusChip"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp"
-            android:background="@drawable/bottom_sheet_background"
-            android:text="Navigation running"
-            android:textSize="12sp"
-            android:textColor="#2196F3"
-            android:visibility="gone" />
-    </LinearLayout>
 
     <!-- Top Status Panel -->
     <LinearLayout
@@ -199,8 +21,7 @@
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
         android:paddingBottom="16dp"
-        android:elevation="8dp"
-        android:visibility="gone">
+        android:elevation="8dp">
 
         <!-- BLE Status -->
         <TextView
@@ -236,240 +57,435 @@
             android:gravity="center"
             android:visibility="gone" />
     </LinearLayout>
-
-    <!-- Bottom Sheet Panel -->
-    <LinearLayout
-        android:id="@+id/bottomSheet"
+    <!-- <TextView
+        android:id="@+id/mapHeaderText"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:background="@drawable/bottom_sheet_background"
-        android:padding="16dp"
-        app:layout_behavior="com.google.android.material.bottomsheet.BottomSheetBehavior"
-        app:behavior_peekHeight="120dp"
-        app:behavior_hideable="false"
-        android:visibility="gone">
+        android:padding="12dp"
+        android:text="Map"
+        android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+        android:textColor="#212121" /> -->
 
-        <!-- Drag Handle -->
-        <View
-            android:layout_width="40dp"
-            android:layout_height="4dp"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginBottom="12dp"
-            android:background="@drawable/drag_handle_background" />
+    <androidx.coordinatorlayout.widget.CoordinatorLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
 
-        <!-- Main Stats Row (always visible when peeked) -->
+        <!-- Full-screen Map View -->
+        <fragment xmlns:android="http://schemas.android.com/apk/res/android"
+          android:name="com.google.android.libraries.navigation.SupportNavigationFragment"
+          android:id="@+id/navigation_fragment"
+          android:layout_width="match_parent"
+          android:layout_height="match_parent"/>
+
+        <!-- Route Planning Panel (hidden by default, shown via toggle button) -->
         <LinearLayout
+            android:id="@+id/routePlanningPanel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center">
+            android:layout_gravity="center_horizontal|center_vertical"
+            android:orientation="vertical"
+            android:background="@color/white"
+            android:paddingTop="16dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="16dp"
+            android:elevation="6dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:visibility="gone">
 
-            <!-- SOC -->
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical"
-                android:gravity="center">
+          <!-- Origin Place Picker -->
+          <LinearLayout
+              android:layout_width="match_parent"
+              android:layout_height="wrap_content"
+              android:orientation="vertical"
+              android:layout_marginBottom="12dp">
 
-                <TextView
-                    android:id="@+id/socValue"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="--"
-                    android:textSize="32sp"
-                    android:textStyle="bold"
-                    android:textColor="#4CAF50" />
+              <TextView
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:text="Starting Location"
+                  android:textSize="12sp"
+                  android:textColor="#666666"
+                  android:layout_marginBottom="4dp" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="SOC %"
-                    android:textSize="12sp"
-                    android:textColor="#666666" />
-            </LinearLayout>
+              <fragment
+                  android:name="com.google.android.libraries.places.widget.AutocompleteSupportFragment"
+                  android:id="@+id/originPlacePickerFragment"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content" />
+          </LinearLayout>
 
-            <!-- Temperature -->
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical"
-                android:gravity="center">
+          <!-- Destination Place Picker -->
+          <LinearLayout
+              android:layout_width="match_parent"
+              android:layout_height="wrap_content"
+              android:orientation="vertical"
+              android:layout_marginBottom="12dp">
 
-                <TextView
-                    android:id="@+id/tempValue"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="--"
-                    android:textSize="32sp"
-                    android:textStyle="bold"
-                    android:textColor="#FF9800" />
+              <TextView
+                  android:layout_width="wrap_content"
+                  android:layout_height="wrap_content"
+                  android:text="Destination"
+                  android:textSize="12sp"
+                  android:textColor="#666666"
+                  android:layout_marginBottom="4dp" />
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Temp °C"
-                    android:textSize="12sp"
-                    android:textColor="#666666" />
-            </LinearLayout>
+              <fragment
+                  android:name="com.google.android.libraries.places.widget.AutocompleteSupportFragment"
+                  android:id="@+id/destinationPlacePickerFragment"
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content" />
+          </LinearLayout>
 
-            <!-- Speed -->
-            <LinearLayout
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical"
-                android:gravity="center">
+          <!-- Route Info and Navigation Button -->
+          <LinearLayout
+              android:id="@+id/routeInfoPanel"
+              android:layout_width="match_parent"
+              android:layout_height="wrap_content"
+              android:orientation="vertical"
+              android:background="@drawable/bottom_sheet_background"
+              android:padding="12dp"
+              android:visibility="gone">
 
-                <TextView
-                    android:id="@+id/speedValue"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="--"
-                    android:textSize="32sp"
-                    android:textStyle="bold"
-                    android:textColor="#2196F3" />
+              <LinearLayout
+                  android:layout_width="match_parent"
+                  android:layout_height="wrap_content"
+                  android:orientation="horizontal"
+                  android:gravity="center_vertical">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="mph"
-                    android:textSize="12sp"
-                    android:textColor="#666666" />
-            </LinearLayout>
+                  <LinearLayout
+                      android:layout_width="0dp"
+                      android:layout_height="wrap_content"
+                      android:layout_weight="1"
+                      android:orientation="vertical">
+
+                      <TextView
+                          android:layout_width="wrap_content"
+                          android:layout_height="wrap_content"
+                          android:text="Distance"
+                          android:textSize="12sp"
+                          android:textColor="#999999" />
+
+                      <TextView
+                          android:id="@+id/routeDistance"
+                          android:layout_width="wrap_content"
+                          android:layout_height="wrap_content"
+                          android:text="--"
+                          android:textSize="16sp"
+                          android:textStyle="bold" />
+                  </LinearLayout>
+
+                  <LinearLayout
+                      android:layout_width="0dp"
+                      android:layout_height="wrap_content"
+                      android:layout_weight="1"
+                      android:orientation="vertical">
+
+                      <TextView
+                          android:layout_width="wrap_content"
+                          android:layout_height="wrap_content"
+                          android:text="Duration"
+                          android:textSize="12sp"
+                          android:textColor="#999999" />
+
+                      <TextView
+                          android:id="@+id/routeDuration"
+                          android:layout_width="wrap_content"
+                          android:layout_height="wrap_content"
+                          android:text="--"
+                          android:textSize="16sp"
+                          android:textStyle="bold" />
+                  </LinearLayout>
+
+                  <Button
+                      android:id="@+id/startNavigationButton"
+                      android:layout_width="wrap_content"
+                      android:layout_height="wrap_content"
+                      android:text="Start"
+                      android:paddingHorizontal="24dp" />
+              </LinearLayout>
+          </LinearLayout>
         </LinearLayout>
 
-        <!-- Expandable Content -->
+        <!-- Map Overlay Controls -->
         <LinearLayout
-            android:id="@+id/expandedContent"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_gravity="bottom|end"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="148dp"
+            android:padding="12dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/routeToggleButton"
+                style="@style/Widget.Material3.Button"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Plan route"
+                android:textAllCaps="false"
+                android:textColor="@android:color/white"
+                android:paddingHorizontal="18dp"
+                android:paddingVertical="12dp"
+                app:cornerRadius="24dp"
+                app:iconPadding="8dp"
+                app:rippleColor="@color/teal_200"
+                android:elevation="6dp"
+                android:backgroundTint="#1E88E5" />
+
+            <TextView
+                android:id="@+id/navigationStatusChip"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:background="@drawable/bottom_sheet_background"
+                android:text="Navigation running"
+                android:textSize="12sp"
+                android:textColor="#2196F3"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <!-- Bottom Sheet Panel -->
+        <LinearLayout
+            android:id="@+id/bottomSheet"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:layout_marginTop="16dp">
+            android:background="@drawable/bottom_sheet_background"
+            android:padding="16dp"
+            app:layout_behavior="com.google.android.material.bottomsheet.BottomSheetBehavior"
+            app:behavior_peekHeight="120dp"
+            app:behavior_hideable="false"
+            android:visibility="gone">
 
-            <!-- Divider -->
+            <!-- Drag Handle -->
             <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:background="#E0E0E0"
-                android:layout_marginBottom="16dp" />
+                android:layout_width="40dp"
+                android:layout_height="4dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginBottom="12dp"
+                android:background="@drawable/drag_handle_background" />
 
-            <!-- Additional Stats Row -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center"
-                android:layout_marginBottom="16dp">
-
-                <!-- Distance -->
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center">
-
-                    <TextView
-                        android:id="@+id/distanceValue"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="0.0"
-                        android:textSize="24sp"
-                        android:textStyle="bold"
-                        android:textColor="#9C27B0" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Distance (mi)"
-                        android:textSize="12sp"
-                        android:textColor="#666666" />
-                </LinearLayout>
-
-                <!-- Duration -->
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center">
-
-                    <TextView
-                        android:id="@+id/durationValue"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="0:00"
-                        android:textSize="24sp"
-                        android:textStyle="bold"
-                        android:textColor="#607D8B" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Duration"
-                        android:textSize="12sp"
-                        android:textColor="#666666" />
-                </LinearLayout>
-
-                <!-- Avg Speed -->
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:orientation="vertical"
-                    android:gravity="center">
-
-                    <TextView
-                        android:id="@+id/avgSpeedValue"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="--"
-                        android:textSize="24sp"
-                        android:textStyle="bold"
-                        android:textColor="#795548" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Avg mph"
-                        android:textSize="12sp"
-                        android:textColor="#666666" />
-                </LinearLayout>
-            </LinearLayout>
-
-            <!-- Action Buttons -->
+            <!-- Main Stats Row (always visible when peeked) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:gravity="center">
 
-                <Button
-                    android:id="@+id/viewLogsButton"
+                <!-- SOC -->
+                <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:layout_marginEnd="8dp"
-                    android:text="View Logs"
-                    android:textSize="16sp"
-                    android:minHeight="48dp"
-                    style="@style/Widget.Material3.Button.OutlinedButton" />
+                    android:orientation="vertical"
+                    android:gravity="center">
 
-                <Button
-                    android:id="@+id/exportButton"
+                    <TextView
+                        android:id="@+id/socValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="--"
+                        android:textSize="32sp"
+                        android:textStyle="bold"
+                        android:textColor="#4CAF50" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="SOC %"
+                        android:textSize="12sp"
+                        android:textColor="#666666" />
+                </LinearLayout>
+
+                <!-- Temperature -->
+                <LinearLayout
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:layout_marginStart="8dp"
-                    android:text="Export CSV"
-                    android:textSize="16sp"
-                    android:minHeight="48dp"
-                    style="@style/Widget.Material3.Button.OutlinedButton" />
+                    android:orientation="vertical"
+                    android:gravity="center">
+
+                    <TextView
+                        android:id="@+id/tempValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="--"
+                        android:textSize="32sp"
+                        android:textStyle="bold"
+                        android:textColor="#FF9800" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Temp °C"
+                        android:textSize="12sp"
+                        android:textColor="#666666" />
+                </LinearLayout>
+
+                <!-- Speed -->
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:gravity="center">
+
+                    <TextView
+                        android:id="@+id/speedValue"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="--"
+                        android:textSize="32sp"
+                        android:textStyle="bold"
+                        android:textColor="#2196F3" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="mph"
+                        android:textSize="12sp"
+                        android:textColor="#666666" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- Expandable Content -->
+            <LinearLayout
+                android:id="@+id/expandedContent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginTop="16dp">
+
+                <!-- Divider -->
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="#E0E0E0"
+                    android:layout_marginBottom="16dp" />
+
+                <!-- Additional Stats Row -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center"
+                    android:layout_marginBottom="16dp">
+
+                    <!-- Distance -->
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:gravity="center">
+
+                        <TextView
+                            android:id="@+id/distanceValue"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0.0"
+                            android:textSize="24sp"
+                            android:textStyle="bold"
+                            android:textColor="#9C27B0" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Distance (mi)"
+                            android:textSize="12sp"
+                            android:textColor="#666666" />
+                    </LinearLayout>
+
+                    <!-- Duration -->
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:gravity="center">
+
+                        <TextView
+                            android:id="@+id/durationValue"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="0:00"
+                            android:textSize="24sp"
+                            android:textStyle="bold"
+                            android:textColor="#607D8B" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Duration"
+                            android:textSize="12sp"
+                            android:textColor="#666666" />
+                    </LinearLayout>
+
+                    <!-- Avg Speed -->
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical"
+                        android:gravity="center">
+
+                        <TextView
+                            android:id="@+id/avgSpeedValue"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="--"
+                            android:textSize="24sp"
+                            android:textStyle="bold"
+                            android:textColor="#795548" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Avg mph"
+                            android:textSize="12sp"
+                            android:textColor="#666666" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- Action Buttons -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center">
+
+                    <Button
+                        android:id="@+id/viewLogsButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="8dp"
+                        android:text="View Logs"
+                        android:textSize="16sp"
+                        android:minHeight="48dp"
+                        style="@style/Widget.Material3.Button.OutlinedButton" />
+
+                    <Button
+                        android:id="@+id/exportButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="8dp"
+                        android:text="Export CSV"
+                        android:textSize="16sp"
+                        android:minHeight="48dp"
+                        style="@style/Widget.Material3.Button.OutlinedButton" />
+                </LinearLayout>
             </LinearLayout>
         </LinearLayout>
-    </LinearLayout>
 
-</androidx.coordinatorlayout.widget.CoordinatorLayout>
+      </androidx.coordinatorlayout.widget.CoordinatorLayout>
+
+</LinearLayout>
