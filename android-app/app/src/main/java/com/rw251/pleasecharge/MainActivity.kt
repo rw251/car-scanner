@@ -310,23 +310,43 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun showRouteStatus(message: String) {
+        runOnUiThread {
+            binding.routeStatusText.text = message
+            binding.routeStatusOverlay.visibility = View.VISIBLE
+        }
+    }
+
+    private fun hideRouteStatus() {
+        runOnUiThread {
+            binding.routeStatusOverlay.visibility = View.GONE
+        }
+    }
+
     private fun calculateAndDisplayRoute(origin: LatLng, destination: LatLng) {
         AppLogger.i("calculateAndDisplayRoute started")
         lifecycleScope.launch {
             try {
+                showRouteStatus("Getting route...")
                 val routeResult = fetchRouteTokenAndPolyline(origin, destination)
                 if (routeResult == null) {
                     AppLogger.w("Routes API returned no routes")
                     binding.routeInfoPanel.visibility = View.GONE
+                    hideRouteStatus()
                     return@launch
                 }
 
                 currentRouteToken = routeResult.first
                 currentRoutePolyline = routeResult.second
                 AppLogger.i("Route received: token=${currentRouteToken?.take(20)}... polyline=${currentRoutePolyline?.take(20)}...")
+                showRouteStatus("Ready")
                 displayRouteInfo(origin, destination)
+                // Hide status after a short delay
+                kotlinx.coroutines.delay(1500)
+                hideRouteStatus()
             } catch (e: Exception) {
                 AppLogger.e("Error calculating route", e)
+                hideRouteStatus()
             }
         }
     }
@@ -587,6 +607,9 @@ class MainActivity : AppCompatActivity() {
         val polyline = route.optJSONObject("polyline")?.optString("encodedPolyline", "")
         AppLogger.i("fetchRouteTokenAndPolyline: Success - token present=${!routeToken.isNullOrEmpty()}, polyline length=${polyline?.length ?: 0}")
 
+        withContext(Dispatchers.Main) {
+            showRouteStatus("Finding chargers...")
+        }
         fetchChargingPoints(polyline, includeCCS = true, includeType2 = false)
 
         Pair(routeToken, polyline)
@@ -972,11 +995,6 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 launch {
-                    viewModel.gpsStatus.collect { status ->
-                        binding.topGpsStatus.text = status
-                    }
-                }
-                launch {
                     viewModel.serviceTimeoutSeconds.collect { seconds ->
                         if (seconds != null && seconds > 0) {
                             binding.topTimeoutCountdown.visibility = View.VISIBLE
@@ -1006,8 +1024,6 @@ class MainActivity : AppCompatActivity() {
                             binding.topBleStatus.text = "Disconnected - please reopen app to start again"
                             binding.topBleStatus.setTextColor("#F44336".toColorInt())
                             binding.topTimeoutCountdown.visibility = View.GONE
-                            binding.topGpsStatus.text = "GPS: Offline"
-                            binding.topGpsStatus.setTextColor("#F44336".toColorInt())
                         }
                     }
                 }

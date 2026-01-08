@@ -35,17 +35,6 @@
             android:gravity="center"
             android:layout_marginBottom="8dp" />
 
-        <!-- GPS Status -->
-        <TextView
-            android:id="@+id/topGpsStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="GPS: Searching..."
-            android:textSize="14sp"
-            android:textColor="#666666"
-            android:gravity="center"
-            android:layout_marginBottom="8dp" />
-
         <!-- Service Timeout Countdown -->
         <TextView
             android:id="@+id/topTimeoutCountdown"
@@ -249,6 +238,37 @@
                 android:textSize="12sp"
                 android:textColor="#2196F3"
                 android:visibility="gone" />
+        </LinearLayout>
+
+        <!-- Route Planning Status Overlay -->
+        <LinearLayout
+            android:id="@+id/routeStatusOverlay"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:orientation="horizontal"
+            android:background="@drawable/bottom_sheet_background"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingTop="16dp"
+            android:paddingBottom="16dp"
+            android:elevation="8dp"
+            android:visibility="gone">
+
+            <ProgressBar
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="12dp"
+                android:indeterminateTint="#2196F3" />
+
+            <TextView
+                android:id="@+id/routeStatusText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Getting route..."
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="#2196F3" />
         </LinearLayout>
 
         <!-- Bottom Sheet Panel -->
