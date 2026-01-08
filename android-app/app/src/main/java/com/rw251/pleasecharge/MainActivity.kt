@@ -395,9 +395,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopNavigation() {
         try {
+            // Stop any running simulation (used in debug builds to fake movement)
+            mNavigator?.simulator?.unsetUserLocation()
+
             mNavigator?.stopGuidance()
-            if(mRoadSnappedLocationProvider != null) {
-              mRoadSnappedLocationProvider.removeLocationListener(mLocationListener)
+            // Clear the route from the map
+            mNavigator?.clearDestinations()
+            if(::mRoadSnappedLocationProvider.isInitialized) {
+                mRoadSnappedLocationProvider.removeLocationListener(mLocationListener)
             }
             AppLogger.i("Navigation stopped")
         } catch (e: Exception) {
