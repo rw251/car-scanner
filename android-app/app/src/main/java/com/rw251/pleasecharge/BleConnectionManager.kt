@@ -51,11 +51,11 @@ object BleConnectionManager {
         }
     }
 
-    fun updateListener(listener: BleObdManager.Listener) {
-        synchronized(listeners) {
-            listeners.add(listener)
-        }
-    }
+//    fun updateListener(listener: BleObdManager.Listener) {
+//        synchronized(listeners) {
+//            listeners.add(listener)
+//        }
+//    }
 
     /**
      * Proxy listener that forwards to all registered listeners

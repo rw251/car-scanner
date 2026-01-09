@@ -2,6 +2,9 @@
   <dictionary name="project">
     <words>
       <w>cccd</w>
+      <w>connectiontypeid</w>
+      <w>fileprovider</w>
+      <w>maxresults</w>
       <w>pleasecharge</w>
       <w>vlink</w>
     </words>

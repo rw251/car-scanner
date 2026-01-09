@@ -21,9 +21,9 @@ object DataCapture {
     private const val MAX_CSV_FILE_SIZE = 10 * 1024 * 1024  // 10 MB
     
     // Deduplication windows (milliseconds)
-    private const val SOC_DEDUP_WINDOW_MS = 500L      // Don't log same SOC within 500ms
-    private const val TEMP_DEDUP_WINDOW_MS = 500L     // Don't log same temp within 500ms
-    private const val LOCATION_DEDUP_WINDOW_MS = 100L // Don't log same location within 100ms
+    private const val SOC_DEDUPE_WINDOW_MS = 500L      // Don't log same SOC within 500ms
+    private const val TEMP_DEDUPE_WINDOW_MS = 500L     // Don't log same temp within 500ms
+    private const val LOCATION_DEDUPE_WINDOW_MS = 100L // Don't log same location within 100ms
     
     private var csvFile: File? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -71,7 +71,7 @@ object DataCapture {
     
     fun logSoc(raw: Int, pct: Double?, timestamp: Long = System.currentTimeMillis()) {
         // Deduplicate: skip if same value within window
-        if (raw == lastSocRaw && (timestamp - lastSocTimestamp) < SOC_DEDUP_WINDOW_MS) {
+        if (raw == lastSocRaw && (timestamp - lastSocTimestamp) < SOC_DEDUPE_WINDOW_MS) {
           AppLogger.i("DataCapture: Skipping duplicate SOC raw value $raw within deduplication window")
             return
         }
@@ -82,7 +82,7 @@ object DataCapture {
     
     fun logTemp(celsius: Double, timestamp: Long = System.currentTimeMillis()) {
         // Deduplicate: skip if same value within window
-        if (celsius == lastTempCelsius && (timestamp - lastTempTimestamp) < TEMP_DEDUP_WINDOW_MS) {
+        if (celsius == lastTempCelsius && (timestamp - lastTempTimestamp) < TEMP_DEDUPE_WINDOW_MS) {
           AppLogger.i("DataCapture: Skipping duplicate temperature value $celsius within deduplication window")
             return
         }
@@ -93,7 +93,7 @@ object DataCapture {
     
     fun logLocation(lat: Double, lon: Double, speedMph: Double, distanceMiles: Double, timestamp: Long = System.currentTimeMillis()) {
         // Deduplicate: skip if same location within window
-        if (lat == lastLat && lon == lastLon && (timestamp - lastLocationTimestamp) < LOCATION_DEDUP_WINDOW_MS) {
+        if (lat == lastLat && lon == lastLon && (timestamp - lastLocationTimestamp) < LOCATION_DEDUPE_WINDOW_MS) {
           AppLogger.i("DataCapture: Skipping duplicate location value lat=$lat, lon=$lon within deduplication window")
             return
         }

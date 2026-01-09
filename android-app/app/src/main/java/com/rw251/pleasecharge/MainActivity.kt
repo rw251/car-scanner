@@ -51,6 +51,11 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlin.math.roundToInt
+import androidx.core.graphics.createBitmap
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 // Extension function to convert JSONObject to Map
 fun JSONObject.toMap(): Map<String, Any> {
@@ -117,7 +122,9 @@ class MainActivity : AppCompatActivity() {
     private var routeOrigin: LatLng? = null
     private var routeDestination: LatLng? = null
     private var directRouteDurationSeconds: Long = 0
-    
+
+    private var navBarHeight: Int = 0
+
     // Charger list tracking
     private var allChargingPoints: List<ChargingPoint> = emptyList()
     private var currentLocationMeters: Double = 0.0 // Current distance along route in meters
@@ -227,6 +234,8 @@ class MainActivity : AppCompatActivity() {
         val navContainer = findViewById<View>(R.id.mainLayout)
         ViewCompat.setOnApplyWindowInsetsListener(navContainer) { view, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+
+            navBarHeight = systemBars.bottom
             view.setBackgroundColor(Color.TRANSPARENT)
             // Apply inset padding so child fragment/content is not obscured by system bars
             view.setPadding(
@@ -254,7 +263,6 @@ class MainActivity : AppCompatActivity() {
         setupBottomSheet()
         setupUI()
         observeViewModel()
-        // ensurePermissionsAndStart() is called in setupUI(), s/local.propertiesnao no need for duplicate maybeStartLocationTracking()
     }
     
     fun initializeNavigator() {
@@ -441,7 +449,7 @@ class MainActivity : AppCompatActivity() {
         // Add markers for filtered chargers
         allChargingPoints.forEach { charger ->
             val markerOptions = com.google.android.gms.maps.model.MarkerOptions()
-                .position(com.google.android.gms.maps.model.LatLng(charger.latitude, charger.longitude))
+                .position(LatLng(charger.latitude, charger.longitude))
                 .title(charger.title ?: "Charging Station")
                 .snippet("${charger.ccsPoints} CCS chargers")
                 
@@ -457,11 +465,8 @@ class MainActivity : AppCompatActivity() {
                 // Convert vector drawable to bitmap
                 val vectorDrawable = androidx.core.content.ContextCompat.getDrawable(this, iconResource)
                 if (vectorDrawable != null) {
-                    val bitmap = android.graphics.Bitmap.createBitmap(
-                        vectorDrawable.intrinsicWidth,
-                        vectorDrawable.intrinsicHeight,
-                        android.graphics.Bitmap.Config.ARGB_8888
-                    )
+                    val bitmap =
+                        createBitmap(vectorDrawable.intrinsicWidth, vectorDrawable.intrinsicHeight)
                     val canvas = android.graphics.Canvas(bitmap)
                     vectorDrawable.setBounds(0, 0, canvas.width, canvas.height)
                     vectorDrawable.draw(canvas)
@@ -489,8 +494,7 @@ class MainActivity : AppCompatActivity() {
     }
     
     private fun highlightNearbyChargers() {
-        val googleMap = mGoogleMap ?: return
-        
+
         // Find chargers within 5 miles of current position along route
         val nearbyThresholdMiles = 5.0
         val nearbyThresholdMeters = nearbyThresholdMiles * 1609.344
@@ -557,7 +561,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateRoute() {
         val origin = originLatLng ?: currentLocation
-        val destination = destinationPlace?.latLng
+        val destination = destinationPlace?.location
         AppLogger.i("updateRoute: origin=${origin?.latitude},${origin?.longitude} destination=${destination?.latitude},${destination?.longitude}")
 
         if (origin != null && destination != null) {
@@ -623,7 +627,7 @@ class MainActivity : AppCompatActivity() {
                 // Show charger list overlay
                 binding.chargerListOverlay.visibility = View.VISIBLE
                 // Hide status after a short delay
-                kotlinx.coroutines.delay(1500)
+                delay(1500)
                 hideRouteStatus()
             } catch (e: Exception) {
                 AppLogger.e("Error calculating route", e)
@@ -641,7 +645,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.routeDistance.text = String.format(Locale.getDefault(), "%.1f km", distance)
         binding.routeDuration.text = if (durationMinutes < 60) {
-            "${durationMinutes} min"
+            "$durationMinutes min"
         } else {
             val hours = durationMinutes / 60
             val mins = durationMinutes % 60
@@ -658,10 +662,10 @@ class MainActivity : AppCompatActivity() {
         val r = 6371.0 // Earth radius in km
         val dLat = Math.toRadians(lat2 - lat1)
         val dLon = Math.toRadians(lon2 - lon1)
-        val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-                Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2)) *
-                Math.sin(dLon / 2) * Math.sin(dLon / 2)
-        val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        val a = sin(dLat / 2) * sin(dLat / 2) +
+                cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
+                sin(dLon / 2) * sin(dLon / 2)
+        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return r * c
     }
 
@@ -678,7 +682,7 @@ class MainActivity : AppCompatActivity() {
         routePanelVisible = !routePanelVisible
         binding.routePlanningPanel.visibility = if (routePanelVisible) View.VISIBLE else View.GONE
         if (routePanelVisible) {
-            binding.routeToggleButton.text = "Hide planner"
+            binding.routeToggleButton.text = getString(R.string.hide_planner)
         } else {
             binding.routeToggleButton.text = if (navigationActive) "Stop navigation" else "Plan route"
         }
@@ -772,7 +776,7 @@ class MainActivity : AppCompatActivity() {
                     if (BuildConfig.DEBUG) {
                         AppLogger.i("navigateToPlace: Starting location simulation at 5x speed")
                         navigator
-                            .getSimulator()
+                            .simulator
                             .simulateLocationsAlongExistingRoute(
                                 SimulationOptions().speedMultiplier(5f))
                     }
@@ -807,18 +811,16 @@ class MainActivity : AppCompatActivity() {
         mRoadSnappedLocationProvider = NavigationApi.getRoadSnappedLocationProvider(application)!!
 
         // Create and register location listener
-        mLocationListener = object : RoadSnappedLocationProvider.LocationListener {
-            override fun onLocationChanged(location: android.location.Location) {
-                // Update location in navigator
-                AppLogger.i("Navigator location update: lat=${location.latitude}, lon=${location.longitude}")
-                
-                // Update current position along route and charger list
-                if (navigationActive && allChargingPoints.isNotEmpty() && decodedRoutePath.isNotEmpty()) {
-                    currentLocationMeters = calculateDistanceAlongRoute(location.latitude, location.longitude)
-                    updateChargerListDisplay()
-                    // Highlight nearby chargers on map
-                    highlightNearbyChargers()
-                }
+        mLocationListener = RoadSnappedLocationProvider.LocationListener { location ->
+            // Update location in navigator
+            AppLogger.i("Navigator location update: lat=${location.latitude}, lon=${location.longitude}")
+
+            // Update current position along route and charger list
+            if (navigationActive && allChargingPoints.isNotEmpty() && decodedRoutePath.isNotEmpty()) {
+                currentLocationMeters = calculateDistanceAlongRoute(location.latitude, location.longitude)
+                updateChargerListDisplay()
+                // Highlight nearby chargers on map
+                highlightNearbyChargers()
             }
         }
         mRoadSnappedLocationProvider.addLocationListener(mLocationListener)
@@ -1091,8 +1093,8 @@ class MainActivity : AppCompatActivity() {
                 result = result or (b and 0x1f shl shift)
                 shift += 5
             } while (b >= 0x20)
-            val dlat = if (result and 1 != 0) (result shr 1).inv() else result shr 1
-            lat += dlat
+            val dLat = if (result and 1 != 0) (result shr 1).inv() else result shr 1
+            lat += dLat
 
             shift = 0
             result = 0
@@ -1101,8 +1103,8 @@ class MainActivity : AppCompatActivity() {
                 result = result or (b and 0x1f shl shift)
                 shift += 5
             } while (b >= 0x20)
-            val dlng = if (result and 1 != 0) (result shr 1).inv() else result shr 1
-            lng += dlng
+            val dLng = if (result and 1 != 0) (result shr 1).inv() else result shr 1
+            lng += dLng
 
             poly.add(LatLng(lat / 1E5, lng / 1E5))
         }
@@ -1177,7 +1179,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             // Truncate polyline to avoid HTTP 414 (Request URI Too Long) errors
-            val truncatedPolyline = polylineString?.let { truncatePolyline(it) } ?: polylineString
+            val truncatedPolyline = polylineString?.let { truncatePolyline(it) }
 
             val url = URL("https://api.openchargemap.io/v3/poi")
             val params = mutableMapOf(
@@ -1363,8 +1365,8 @@ class MainActivity : AppCompatActivity() {
         val minutesMatch = Regex("""(\d+)m""").find(durationString)
         val secondsMatch = Regex("""(\d+)s""").find(durationString)
         
-        hoursMatch?.let { total += it.groupValues[1].toLongOrNull() ?: 0L * 3600 }
-        minutesMatch?.let { total += it.groupValues[1].toLongOrNull() ?: 0L * 60 }
+        hoursMatch?.let { total += it.groupValues[1].toLongOrNull() ?: (0L * 3600) }
+        minutesMatch?.let { total += it.groupValues[1].toLongOrNull() ?: (0L * 60) }
         secondsMatch?.let { total += it.groupValues[1].toLongOrNull() ?: 0L }
         
         return total
@@ -1379,7 +1381,6 @@ class MainActivity : AppCompatActivity() {
         charger: ChargingPoint
     ): ChargingPoint = withContext(Dispatchers.IO) {
         try {
-            val chargerLatLng = LatLng(charger.latitude, charger.longitude)
             
             // Make Routes API call with waypoint
             val url = URL("https://routes.googleapis.com/directions/v2:computeRoutes")
@@ -1514,8 +1515,6 @@ class MainActivity : AppCompatActivity() {
     private fun setupBottomSheet() {
         bottomSheetBehavior = BottomSheetBehavior.from(binding.bottomSheet)
         
-        // Get navigation bar height to add to peek height
-        val navBarHeight = getNavigationBarHeight()
         val basePeekHeight = resources.getDimensionPixelSize(R.dimen.bottom_sheet_peek_height)
         
         bottomSheetBehavior.apply {
@@ -1563,7 +1562,7 @@ class MainActivity : AppCompatActivity() {
     private fun setupUI() {
         binding.routePlanningPanel.visibility = View.GONE
         binding.navigationStatusChip.visibility = View.GONE
-        binding.routeToggleButton.text = "Plan route"
+        binding.routeToggleButton.text = getString(R.string.plan_route)
 
         binding.routeToggleButton.setOnClickListener {
             if (navigationActive) {
@@ -1778,12 +1777,8 @@ class MainActivity : AppCompatActivity() {
         if (durationJob != null) return
         durationJob = lifecycleScope.launch {
             while (isActive) {
-                kotlinx.coroutines.delay(1000)  // Update every second
+                delay(1000)  // Update every second
                 updateDurationDisplay()
-                // Update charger distances every second for real-time feel
-                if (navigationActive && allChargingPoints.isNotEmpty()) {
-                    updateChargerListDisplay()
-                }
             }
         }
     }
@@ -1952,15 +1947,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun nowString(): String = 
         SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-    
-    private fun getNavigationBarHeight(): Int {
-        val resourceId = resources.getIdentifier("navigation_bar_height", "dimen", "android")
-        return if (resourceId > 0) {
-            resources.getDimensionPixelSize(resourceId)
-        } else {
-            0
-        }
-    }
 
     private fun startBleForegroundService() {
         val intent = Intent(this, BleForegroundService::class.java).apply {

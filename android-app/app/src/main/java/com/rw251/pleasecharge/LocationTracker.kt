@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.lang.ref.WeakReference
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
@@ -71,7 +72,7 @@ object LocationTracker {
     private var consecutiveFallbacks = 0
     private var devMode = false  // When true, ignore real GPS and only use injected locations
     private var isMoving = false  // Track whether we're currently moving
-    private var savedContext: Context? = null  // Save context for reconfiguring GPS
+    private var savedContextRef: WeakReference<Context>? = null  // Save context for reconfiguring GPS
     private var savedOnLog: ((String) -> Unit)? = null  // Save log callback
     private var totalTripDistanceMeters = 0.0  // Cumulative trip distance
 
@@ -94,7 +95,7 @@ object LocationTracker {
         }
         
         AppLogger.i("LocationTracker.start() - starting location tracking")
-        savedContext = context.applicationContext
+        savedContextRef = WeakReference(context.applicationContext)
         savedOnLog = onLog
 
         client = LocationServices.getFusedLocationProviderClient(context.applicationContext)
@@ -133,8 +134,7 @@ object LocationTracker {
     private fun updateGpsFrequency(moving: Boolean) {
         if (isMoving == moving) return  // No change needed
         isMoving = moving
-        
-        val ctx = savedContext ?: return
+
         val cb = callback ?: return
         val onLog = savedOnLog ?: {}
         
@@ -153,7 +153,7 @@ object LocationTracker {
         callback?.let { cb -> client?.removeLocationUpdates(cb) }
         callback = null
         client = null
-        savedContext = null
+        savedContextRef = null
         savedOnLog = null
         isMoving = false
         synchronized(lock) {
@@ -197,7 +197,6 @@ object LocationTracker {
         
         synchronized(lock) {
             val prev = samples.lastOrNull()
-            val deltaSec = if (prev != null) max(0.001, (timestamp - prev.timestampMs) / 1000.0) else 0.0
             val distanceMeters = if (prev != null) haversineMeters(prev.lat, prev.lon, lat, lon) else 0.0
             
             samples.add(

@@ -5,7 +5,6 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -22,7 +21,6 @@ object AppLogger {
     private const val TAG = "PleaseCharge"
     private const val LOG_FILE_NAME = "app_log.txt"
     private const val MAX_LOG_FILE_SIZE = 5 * 1024 * 1024  // 5 MB
-    private const val MAX_MEMORY_LINES = 500
     
     private var logFile: File? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

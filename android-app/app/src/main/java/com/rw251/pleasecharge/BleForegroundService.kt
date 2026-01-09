@@ -48,7 +48,7 @@ class BleForegroundService : Service() {
     private var lastBleConnectedState: Boolean = false
     private var lastPreloadLat: Double? = null
     private var lastPreloadLon: Double? = null
-    private val PRELOAD_THRESHOLD_KM = 1.0  // Preload when moved 1km from last preload location
+    private val preloadThreshold = 1.0  // Preload when moved 1km from last preload location
 
     override fun onCreate() {
         super.onCreate()
@@ -236,7 +236,7 @@ class BleForegroundService : Service() {
             true  // First location, always preload
         } else {
             val distanceKm = haversineKm(lastLat, lastLon, lat, lon)
-            distanceKm >= PRELOAD_THRESHOLD_KM
+            distanceKm >= preloadThreshold
         }
         
         if (shouldPreload) {
