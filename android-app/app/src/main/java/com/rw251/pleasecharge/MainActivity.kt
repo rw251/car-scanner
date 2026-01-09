@@ -128,6 +128,8 @@ class MainActivity : AppCompatActivity() {
     // Make navigator and routing options nullable as they're initialized later
     var mNavigator: Navigator? = null
     var mRoutingOptions: RoutingOptions? = null
+    var mGoogleMap: com.google.android.gms.maps.GoogleMap? = null
+    private val chargerMarkers = mutableListOf<com.google.android.gms.maps.model.Marker>()
     
     // OpenChargeMap reference data
     private var openChargeMapRefData: OpenChargeMapReferenceData? = null
@@ -267,6 +269,17 @@ class MainActivity : AppCompatActivity() {
 
                 // Set the travel mode.
                 mRoutingOptions = RoutingOptions().travelMode(RoutingOptions.TravelMode.DRIVING)
+                
+                // Get the GoogleMap instance to add markers
+                try {
+                    val mapFragment = supportFragmentManager.findFragmentById(R.id.navigation_fragment) as? com.google.android.libraries.navigation.SupportNavigationFragment
+                    mapFragment?.getMapAsync { googleMap ->
+                        mGoogleMap = googleMap
+                        AppLogger.i("GoogleMap ready for markers")
+                    }
+                } catch (e: Exception) {
+                    AppLogger.e("Failed to get GoogleMap", e)
+                }
             }
 
             /**
@@ -412,7 +425,85 @@ class MainActivity : AppCompatActivity() {
         allChargingPoints = distanceFiltered.sortedBy { it.distanceAlongRoute }
         updateChargerListDisplay()
         
+        // Update map markers
+        updateChargerMarkers()
+        
         AppLogger.i("Applied filters: ${allChargingPoints.size} chargers (from ${allFetchedChargers.size} total)")
+    }
+    
+    private fun updateChargerMarkers() {
+        val googleMap = mGoogleMap ?: return
+        
+        // Clear existing markers
+        chargerMarkers.forEach { it.remove() }
+        chargerMarkers.clear()
+        
+        // Add markers for filtered chargers
+        allChargingPoints.forEach { charger ->
+            val markerOptions = com.google.android.gms.maps.model.MarkerOptions()
+                .position(com.google.android.gms.maps.model.LatLng(charger.latitude, charger.longitude))
+                .title(charger.title ?: "Charging Station")
+                .snippet("${charger.ccsPoints} CCS chargers")
+                
+            // Choose icon based on number of CCS chargers
+            val iconResource = when {
+                charger.ccsPoints == 1 -> R.drawable.ic_charger_single
+                charger.ccsPoints in 2..6 -> R.drawable.ic_charger_medium
+                charger.ccsPoints > 6 -> R.drawable.ic_charger_large
+                else -> R.drawable.ic_charger_single
+            }
+            
+            try {
+                // Convert vector drawable to bitmap
+                val vectorDrawable = androidx.core.content.ContextCompat.getDrawable(this, iconResource)
+                if (vectorDrawable != null) {
+                    val bitmap = android.graphics.Bitmap.createBitmap(
+                        vectorDrawable.intrinsicWidth,
+                        vectorDrawable.intrinsicHeight,
+                        android.graphics.Bitmap.Config.ARGB_8888
+                    )
+                    val canvas = android.graphics.Canvas(bitmap)
+                    vectorDrawable.setBounds(0, 0, canvas.width, canvas.height)
+                    vectorDrawable.draw(canvas)
+                    
+                    val icon = com.google.android.gms.maps.model.BitmapDescriptorFactory.fromBitmap(bitmap)
+                    markerOptions.icon(icon)
+                }
+            } catch (e: Exception) {
+                AppLogger.w("Failed to set marker icon: ${e.message}")
+            }
+            
+            val marker = googleMap.addMarker(markerOptions)
+            marker?.let { 
+                marker.tag = charger.id // Store charger ID in marker tag
+                chargerMarkers.add(it) 
+            }
+        }
+        
+        // Highlight nearby chargers if navigation is active
+        if (navigationActive) {
+            highlightNearbyChargers()
+        }
+        
+        AppLogger.i("Added ${chargerMarkers.size} charger markers to map")
+    }
+    
+    private fun highlightNearbyChargers() {
+        val googleMap = mGoogleMap ?: return
+        
+        // Find chargers within 5 miles of current position along route
+        val nearbyThresholdMiles = 5.0
+        val nearbyThresholdMeters = nearbyThresholdMiles * 1609.344
+        
+        allChargingPoints.forEach { charger ->
+            val distanceToCharger = charger.distanceAlongRoute - currentLocationMeters
+            
+            // Highlight if within threshold and ahead of current position
+            if (distanceToCharger in 0.0..nearbyThresholdMeters) {
+                val marker = chargerMarkers.find { (it.tag as? Int) == charger.id }
+                marker?.showInfoWindow() // Show info window for nearby chargers
+            }
+        }
     }
 
     private fun initializePlacePickers() {
@@ -624,6 +715,11 @@ class MainActivity : AppCompatActivity() {
         lastFetchedMaxDistanceMiles = 0
         fetchedWithCCS = false
         fetchedWithType2 = false
+        
+        // Clear map markers
+        chargerMarkers.forEach { it.remove() }
+        chargerMarkers.clear()
+        
         binding.chargerListOverlay.visibility = View.GONE
         binding.refetchChargersButton.visibility = View.GONE
         setNavigationActive(false)
@@ -720,6 +816,8 @@ class MainActivity : AppCompatActivity() {
                 if (navigationActive && allChargingPoints.isNotEmpty() && decodedRoutePath.isNotEmpty()) {
                     currentLocationMeters = calculateDistanceAlongRoute(location.latitude, location.longitude)
                     updateChargerListDisplay()
+                    // Highlight nearby chargers on map
+                    highlightNearbyChargers()
                 }
             }
         }

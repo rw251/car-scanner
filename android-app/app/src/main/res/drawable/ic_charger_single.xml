@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+
+    <!-- Circle background (amber) -->
+    <path
+        android:fillColor="#FFB300"
+        android:pathData="M16,16m-14,0a14,14 0,1 1,28 0a14,14 0,1 1,-28 0"/>
+
+    <!-- Single lightning bolt (centered) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M18,8L12,16h4l-2,8l6,-8h-4z"/>
+</vector>

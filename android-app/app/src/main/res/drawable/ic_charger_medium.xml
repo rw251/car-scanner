@@ -1,0 +1,22 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+
+    <!-- Circle background (green) -->
+    <path
+        android:fillColor="#4CAF50"
+        android:pathData="M16,16m-14,0a14,14 0,1 1,28 0a14,14 0,1 1,-28 0"/>
+
+    <!-- Left bolt (shifted left by 3) -->
+    <group android:translateY="1">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M15,8L9,16h4l-2,8l6,-8h-4z"/>
+    </group>
+    <!-- Right bolt (shifted right by 3) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M21,8L15,16h4l-2,8l6,-8h-4z"/>
+</vector>

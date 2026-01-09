@@ -1,0 +1,42 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+
+    <!-- Circular background (teal) -->
+    <path
+        android:fillColor="#00ACC1"
+        android:pathData="M16,16m-14,0a14,14 0,1 1,28 0a14,14 0,1 1,-28 0"/>
+
+    <!-- subtle outer ring (very light alpha) -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#000000"
+        android:strokeAlpha="0.06"
+        android:strokeWidth="1"
+        android:pathData="M16,16m-15,0a15,15 0,1 1,30 0a15,15 0,1 1,-30 0"/>
+
+    <!-- Bolt group (base bolt path repeated with horizontal offsets) -->
+    <!-- Left bolt: translated left by 5 -->
+    <group android:translateX="-5" android:translateY="1">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M18,8 L12,16 H16 L14,24 L20,16 H16 Z"/>
+    </group>
+
+    <!-- Center bolt: no translate -->
+    <group>
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M18,8 L12,16 H16 L14,24 L20,16 H16 Z"/>
+    </group>
+
+    <!-- Right bolt: translated right by 5 -->
+    <group android:translateX="5" android:translateY="-1">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M18,8 L12,16 H16 L14,24 L20,16 H16 Z"/>
+    </group>
+
+</vector>
