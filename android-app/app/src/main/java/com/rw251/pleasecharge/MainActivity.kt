@@ -98,7 +98,16 @@ class MainActivity : AppCompatActivity() {
     private var journeyStartTime: Long? = null
     private var currentRouteToken: String? = null
     private var currentRoutePolyline: String? = null
-    private var chargerDistanceLimitMiles: Int = 250 // Default 250 miles from start
+    private var chargerMinDistanceMiles: Int = 0 // Default 0 miles from start
+    private var chargerMaxDistanceMiles: Int = 300 // Default 300 miles from start
+    private var includeCCSConnectors: Boolean = true // Default CCS on
+    private var includeType2Connectors: Boolean = false // Default Type 2 off
+    
+    // Track what has been fetched from API
+    private var lastFetchedMaxDistanceMiles: Int = 0
+    private var fetchedWithCCS: Boolean = false
+    private var fetchedWithType2: Boolean = false
+    private var allFetchedChargers: List<ChargingPoint> = emptyList() // Raw unfiltered results
 
     // Route polyline tracking
     private var decodedRoutePath: List<LatLng> = emptyList()
@@ -275,6 +284,137 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    private fun setupChargerConfigControls() {
+        // Min distance input - update immediately as user types
+        binding.chargerMinDistanceInput.setText(chargerMinDistanceMiles.toString())
+        binding.chargerMinDistanceInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                val value = s.toString().toIntOrNull() ?: 0
+                val newMin = value.coerceAtLeast(0)
+                if (newMin != chargerMinDistanceMiles) {
+                    chargerMinDistanceMiles = newMin
+                    // Requirement 2: Update charger list immediately
+                    applyFiltersAndUpdateChargerList()
+                }
+            }
+        })
+
+        // Max distance input - update immediately as user types
+        binding.chargerMaxDistanceInput.setText(chargerMaxDistanceMiles.toString())
+        binding.chargerMaxDistanceInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                val value = s.toString().toIntOrNull() ?: 300
+                val newMax = value.coerceAtLeast(0)
+                if (newMax != chargerMaxDistanceMiles) {
+                    val oldMax = chargerMaxDistanceMiles
+                    chargerMaxDistanceMiles = newMax
+                    
+                    // Requirement 3: Reducing max has no effect (just filter existing)
+                    if (newMax <= oldMax) {
+                        applyFiltersAndUpdateChargerList()
+                    }
+                    // Requirement 4: Increasing beyond last fetch shows prompt
+                    else if (newMax > lastFetchedMaxDistanceMiles) {
+                        showRefetchPrompt()
+                    } else {
+                        applyFiltersAndUpdateChargerList()
+                    }
+                }
+            }
+        })
+
+        // Requirement 5: CCS and Type 2 toggle buttons
+        binding.connectorCcsToggle.isChecked = includeCCSConnectors
+        binding.connectorType2Toggle.isChecked = includeType2Connectors
+        
+        binding.connectorCcsToggle.setOnCheckedChangeListener { _, isChecked ->
+            includeCCSConnectors = isChecked
+            AppLogger.i("CCS filter: $isChecked")
+            checkIfRefetchNeeded()
+        }
+        
+        binding.connectorType2Toggle.setOnCheckedChangeListener { _, isChecked ->
+            includeType2Connectors = isChecked
+            AppLogger.i("Type 2 filter: $isChecked")
+            checkIfRefetchNeeded()
+        }
+        
+        // Hide refetch button initially
+        binding.refetchChargersButton.visibility = View.GONE
+        binding.refetchChargersButton.setOnClickListener {
+            refetchChargers()
+        }
+    }
+    
+    private fun checkIfRefetchNeeded() {
+        // Requirement 6: Only show prompt if we need data we don't have
+        val needsCCS = includeCCSConnectors && !fetchedWithCCS
+        val needsType2 = includeType2Connectors && !fetchedWithType2
+        
+        if (needsCCS || needsType2) {
+            showRefetchPrompt()
+        } else {
+            // We have all the data we need, just refilter
+            applyFiltersAndUpdateChargerList()
+            binding.refetchChargersButton.visibility = View.GONE
+        }
+    }
+    
+    private fun showRefetchPrompt() {
+        if (currentRoutePolyline != null) {
+            binding.refetchChargersButton.visibility = View.VISIBLE
+        }
+    }
+    
+    private fun refetchChargers() {
+        val origin = routeOrigin
+        val destination = routeDestination
+        if (origin != null && destination != null) {
+            lifecycleScope.launch {
+                showRouteStatus("Fetching chargers...")
+                allFetchedChargers = fetchChargingPoints(
+                    currentRoutePolyline, 
+                    includeCCS = includeCCSConnectors, 
+                    includeType2 = includeType2Connectors
+                )
+                lastFetchedMaxDistanceMiles = chargerMaxDistanceMiles
+                if (includeCCSConnectors) fetchedWithCCS = true
+                if (includeType2Connectors) fetchedWithType2 = true
+                
+                applyFiltersAndUpdateChargerList()
+                binding.refetchChargersButton.visibility = View.GONE
+                hideRouteStatus()
+            }
+        }
+    }
+    
+    private fun applyFiltersAndUpdateChargerList() {
+        if (allFetchedChargers.isEmpty()) return
+        
+        // Filter by connector type
+        val connectorFiltered = allFetchedChargers.filter { point ->
+            (includeCCSConnectors && point.ccsPoints > 0) || 
+            (includeType2Connectors && point.type2Points > 0)
+        }
+        
+        // Filter by distance range
+        val minMeters = chargerMinDistanceMiles * 1609.344
+        val maxMeters = chargerMaxDistanceMiles * 1609.344
+        val distanceFiltered = connectorFiltered.filter { point ->
+            point.distanceAlongRoute >= minMeters && point.distanceAlongRoute <= maxMeters
+        }
+        
+        // Update the active list and UI
+        allChargingPoints = distanceFiltered.sortedBy { it.distanceAlongRoute }
+        updateChargerListDisplay()
+        
+        AppLogger.i("Applied filters: ${allChargingPoints.size} chargers (from ${allFetchedChargers.size} total)")
+    }
+
     private fun initializePlacePickers() {
         // Initialize Places SDK (uses API key from AndroidManifest.xml meta-data)
         if (!Places.isInitialized()) {
@@ -285,6 +425,9 @@ class MainActivity : AppCompatActivity() {
                 return
             }
         }
+
+        // Setup charger configuration controls
+        setupChargerConfigControls()
 
         // Get the place picker fragments
         originPlacePicker = supportFragmentManager.findFragmentById(R.id.originPlacePickerFragment) as? AutocompleteSupportFragment
@@ -375,15 +518,18 @@ class MainActivity : AppCompatActivity() {
                 
                 // Now fetch charging points after directRouteDurationSeconds is set
                 showRouteStatus("Finding chargers...")
-                allChargingPoints = fetchChargingPoints(currentRoutePolyline, includeCCS = true, includeType2 = false)
-                // Sort chargers by distance along route
-                allChargingPoints = allChargingPoints.sortedBy { it.distanceAlongRoute }
-                AppLogger.i("Chargers fetched and sorted: ${allChargingPoints.size} total")
+                allFetchedChargers = fetchChargingPoints(currentRoutePolyline, includeCCS = includeCCSConnectors, includeType2 = includeType2Connectors)
+                lastFetchedMaxDistanceMiles = chargerMaxDistanceMiles
+                fetchedWithCCS = includeCCSConnectors
+                fetchedWithType2 = includeType2Connectors
+                
+                // Apply filters to get the active list
+                applyFiltersAndUpdateChargerList()
+                AppLogger.i("Chargers fetched: ${allFetchedChargers.size} total, ${allChargingPoints.size} after filters")
                 
                 showRouteStatus("Ready")
                 displayRouteInfo(origin, destination)
                 // Show charger list overlay
-                updateChargerListDisplay()
                 binding.chargerListOverlay.visibility = View.VISIBLE
                 // Hide status after a short delay
                 kotlinx.coroutines.delay(1500)
@@ -474,7 +620,12 @@ class MainActivity : AppCompatActivity() {
         }
         // Clear chargers and hide list
         allChargingPoints = emptyList()
+        allFetchedChargers = emptyList()
+        lastFetchedMaxDistanceMiles = 0
+        fetchedWithCCS = false
+        fetchedWithType2 = false
         binding.chargerListOverlay.visibility = View.GONE
+        binding.refetchChargersButton.visibility = View.GONE
         setNavigationActive(false)
     }
 
@@ -1026,31 +1177,32 @@ class MainActivity : AppCompatActivity() {
 
             AppLogger.i("fetchChargingPoints: Received ${chargingPoints.size} charging points")
             
-            // Filter by distance along route
+            // Calculate distance along route for all points (don't filter yet)
             withContext(Dispatchers.Main) {
-                showRouteStatus("Filtering by distance...")
+                showRouteStatus("Calculating distances...")
             }
             
-            val distanceLimitMeters = chargerDistanceLimitMiles * 1609.344 // miles to meters
-            val filteredByDistance = chargingPoints.filter { point ->
+            val maxDistanceMeters = chargerMaxDistanceMiles * 1609.344 // miles to meters
+            val pointsWithDistance = chargingPoints.filter { point ->
                 val distanceAlongRoute = calculateDistanceAlongRoute(point.latitude, point.longitude)
                 point.distanceAlongRoute = distanceAlongRoute
-                distanceAlongRoute <= distanceLimitMeters
+                // Only filter by max distance for API efficiency
+                distanceAlongRoute <= maxDistanceMeters
             }
             
-            AppLogger.i("Filtered to ${filteredByDistance.size} chargers within $chargerDistanceLimitMiles miles of route start")
+            AppLogger.i("${pointsWithDistance.size} chargers within $chargerMaxDistanceMiles miles of route start")
             
             // Calculate deviations
             withContext(Dispatchers.Main) {
-                showRouteStatus("Calculating deviations (${filteredByDistance.size} chargers)...")
+                showRouteStatus("Calculating deviations (${pointsWithDistance.size} chargers)...")
             }
             
-            val pointsWithDeviations = calculateDeviationsForChargers(filteredByDistance)
+            val pointsWithDeviations = calculateDeviationsForChargers(pointsWithDistance)
             
             // Log final results
             AppLogger.i("=== CHARGER DEVIATION RESULTS ===")
             AppLogger.i("Total chargers found: ${chargingPoints.size}")
-            AppLogger.i("Within $chargerDistanceLimitMiles miles: ${filteredByDistance.size}")
+            AppLogger.i("Up to $chargerMaxDistanceMiles miles: ${pointsWithDistance.size}")
             AppLogger.i("With calculated deviations: ${pointsWithDeviations.size}")
             pointsWithDeviations.forEach { point ->
                 val devMinutes = (point.deviationSeconds ?: 0) / 60.0
