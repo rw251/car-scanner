@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Toast
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -123,6 +124,7 @@ class MainActivity : AppCompatActivity() {
     private var routeDestination: LatLng? = null
     private var directRouteDurationSeconds: Long = 0
 
+    private var topBarHeight: Int = 0
     private var navBarHeight: Int = 0
 
     // Charger list tracking
@@ -236,6 +238,11 @@ class MainActivity : AppCompatActivity() {
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
 
             navBarHeight = systemBars.bottom
+
+            val minBarHeightDp = 40
+            val minBarHeightPx = (minBarHeightDp * resources.displayMetrics.density).toInt()
+            topBarHeight = maxOf(systemBars.top, minBarHeightPx)
+            
             view.setBackgroundColor(Color.TRANSPARENT)
             // Apply inset padding so child fragment/content is not obscured by system bars
             view.setPadding(
@@ -1616,8 +1623,14 @@ class MainActivity : AppCompatActivity() {
                             // Only show "Reconnecting" if we've previously connected
                             // Otherwise let the normal BLE state show through (Scanning, Connecting, etc.)
                             if (ServiceStatus.hasConnectedBefore.value) {
+                                binding.topBleStatus.visibility = View.VISIBLE
                                 binding.topBleStatus.text = "OBD: Reconnecting..."
-                                binding.topBleStatus.setTextColor("#FF9800".toColorInt())  // Orange for reconnecting
+                                binding.topStatusPanel.setBackgroundColor("#FF9800".toColorInt())  // Orange for reconnecting
+                                // Keep padding when showing text
+                                val smallPaddingPx = (16 * resources.displayMetrics.density).toInt()
+                                val largePaddingPx = (48 * resources.displayMetrics.density).toInt()
+                                binding.topStatusPanel.setPadding(smallPaddingPx, largePaddingPx, smallPaddingPx, smallPaddingPx)
+                                binding.topStatusPanel.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
                             }
                         } else {
                             binding.topTimeoutCountdown.visibility = View.GONE
@@ -1632,10 +1645,12 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     ServiceStatus.isServiceRunning.collect { isRunning ->
                         if (!isRunning) {
-                            // Service has stopped - update UI
-                            binding.topBleStatus.text = "Disconnected - please reopen app to start again"
-                            binding.topBleStatus.setTextColor("#F44336".toColorInt())
+                            // Service has stopped - hide text, show red bar only, remove padding
+                            binding.topBleStatus.visibility = View.GONE
+                            binding.topStatusPanel.setBackgroundColor("#F44336".toColorInt())
                             binding.topTimeoutCountdown.visibility = View.GONE
+                            binding.topStatusPanel.setPadding(0, 0, 0, 0)
+                            binding.topStatusPanel.layoutParams.height = topBarHeight
                         }
                     }
                 }
@@ -1645,24 +1660,40 @@ class MainActivity : AppCompatActivity() {
     
     private fun updateBleStatus(state: BleObdManager.State) {
        
-        // Update top panel BLE status
-        val topStatusText = when (state) {
-            BleObdManager.State.DISCONNECTED -> "OBD: Disconnected"
-            BleObdManager.State.SCANNING -> "Scanning for OBD device..."
-            BleObdManager.State.CONNECTING -> "Connecting to OBD..."
-            BleObdManager.State.DISCOVERING -> "Discovering services..."
-            BleObdManager.State.CONFIGURING -> "Configuring OBD adapter..."
-            BleObdManager.State.READY -> "OBD: Connected ✓"
+        // Update top status bar color based on BLE state
+        // Green when connected, Red when disconnected, Blue for other states
+        val barColor = when (state) {
+            BleObdManager.State.READY -> "#4CAF50".toColorInt()  // Green when connected
+            BleObdManager.State.DISCONNECTED -> "#F44336".toColorInt()  // Red when disconnected
+            else -> "#2196F3".toColorInt()  // Blue for scanning, connecting, discovering, configuring
         }
-        binding.topBleStatus.text = topStatusText
+        binding.topStatusPanel.setBackgroundColor(barColor)
         
-        // Color coding
-        val color = when (state) {
-            BleObdManager.State.READY -> "#4CAF50".toColorInt()
-            BleObdManager.State.DISCONNECTED -> "#F44336".toColorInt()
-            else -> "#2196F3".toColorInt()
+        // Show text only during connecting/reconnecting states (not when connected or disconnected)
+        val showText = state != BleObdManager.State.READY && state != BleObdManager.State.DISCONNECTED
+        binding.topBleStatus.visibility = if (showText) View.VISIBLE else View.GONE
+        
+        // Remove padding when showing just colored bar (connected/disconnected), keep padding for text
+        if (showText) {
+            // Keep padding for intermediate states with text (16dp all sides)
+            val smallPaddingPx = (16 * resources.displayMetrics.density).toInt()
+            val largePaddingPx = (48 * resources.displayMetrics.density).toInt()
+            binding.topStatusPanel.setPadding(smallPaddingPx, largePaddingPx, smallPaddingPx, smallPaddingPx)
+            binding.topStatusPanel.layoutParams.height = ViewGroup.LayoutParams.WRAP_CONTENT
+            // Update text for connecting states
+            val topStatusText = when (state) {
+                BleObdManager.State.SCANNING -> "Scanning for OBD device..."
+                BleObdManager.State.CONNECTING -> "Connecting to OBD..."
+                BleObdManager.State.DISCOVERING -> "Discovering services..."
+                BleObdManager.State.CONFIGURING -> "Configuring OBD adapter..."
+                else -> "Connecting..."
+            }
+            binding.topBleStatus.text = topStatusText
+        } else {
+            // Remove padding when showing just colored bar
+            binding.topStatusPanel.setPadding(0, 0, 0, 0)
+            binding.topStatusPanel.layoutParams.height = topBarHeight
         }
-        binding.topBleStatus.setTextColor(color)
 
         if (state == BleObdManager.State.READY) {
             if (journeyStartTime == null) {
