@@ -580,7 +580,7 @@
               android:paddingStart="12dp"
               android:paddingEnd="12dp"
               android:paddingTop="12dp"
-              android:paddingBottom="2dp"
+              android:paddingBottom="12dp"
               android:elevation="8dp"
               android:visibility="gone"
               android:layout_marginStart="0dp"
@@ -589,10 +589,9 @@
 
               <Button
                   android:id="@+id/viewLogsButton"
-                  android:layout_width="0dp"
+                  android:layout_width="match_parent"
                   android:layout_height="wrap_content"
-                  android:layout_weight="1"
-                  android:layout_marginEnd="8dp"
+                  android:layout_marginBottom="8dp"
                   android:text="View Logs"
                   android:textSize="16sp"
                   android:minHeight="48dp"
@@ -600,10 +599,9 @@
 
               <Button
                   android:id="@+id/exportButton"
-                  android:layout_width="0dp"
+                  android:layout_width="match_parent"
                   android:layout_height="wrap_content"
-                  android:layout_weight="1"
-                  android:layout_marginStart="8dp"
+                  android:layout_marginBottom="8dp"
                   android:text="Export CSV"
                   android:textSize="16sp"
                   android:minHeight="48dp"
@@ -611,10 +609,8 @@
 
               <Button
                   android:id="@+id/pauseResumeButton"
-                  android:layout_width="0dp"
+                  android:layout_width="match_parent"
                   android:layout_height="wrap_content"
-                  android:layout_weight="1"
-                  android:layout_marginStart="8dp"
                   android:text="Pause app"
                   android:textSize="16sp"
                   android:minHeight="48dp"
