@@ -17,7 +17,8 @@ import java.util.concurrent.ConcurrentLinkedQueue
  * Includes deduplication to prevent logging duplicate values within short time windows.
  */
 object DataCapture {
-    private const val CSV_FILE_NAME = "vehicle_data.csv"
+    private const val CSV_FILE_PREFIX = "vehicle_data_" // e.g., vehicle_data_2026-02.csv
+    private const val CSV_FILE_SUFFIX = ".csv"
     private const val MAX_CSV_FILE_SIZE = 10 * 1024 * 1024  // 10 MB
     
     // Deduplication windows (milliseconds)
@@ -26,6 +27,8 @@ object DataCapture {
     private const val LOCATION_DEDUPE_WINDOW_MS = 100L // Don't log same location within 100ms
     
     private var csvFile: File? = null
+    private var filesDir: File? = null
+    private var currentWeekId: String = ""
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val writeQueue = ConcurrentLinkedQueue<CsvRow>()
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
@@ -53,7 +56,9 @@ object DataCapture {
     
     fun init(context: Context) {
         if (initialized) return
-        csvFile = File(context.filesDir, CSV_FILE_NAME)
+        filesDir = context.filesDir
+        currentWeekId = weekId(System.currentTimeMillis())
+        csvFile = File(filesDir!!, fileNameForWeek(currentWeekId))
         
         // Create CSV with headers if it doesn't exist
         if (csvFile?.exists() == false) {
@@ -75,6 +80,11 @@ object DataCapture {
           AppLogger.i("DataCapture: Skipping duplicate SOC raw value $raw within deduplication window")
             return
         }
+        // Enforce minimum logging interval
+        if ((timestamp - lastSocLoggedTs) < SOC_MIN_INTERVAL_MS) {
+            return
+        }
+        lastSocLoggedTs = timestamp
         lastSocRaw = raw
         lastSocTimestamp = timestamp
         enqueue(CsvRow(timestamp = timestamp, socRaw = raw, socPct = pct))
@@ -86,6 +96,11 @@ object DataCapture {
           AppLogger.i("DataCapture: Skipping duplicate temperature value $celsius within deduplication window")
             return
         }
+        // Enforce minimum logging interval
+        if ((timestamp - lastTempLoggedTs) < TEMP_MIN_INTERVAL_MS) {
+            return
+        }
+        lastTempLoggedTs = timestamp
         lastTempCelsius = celsius
         lastTempTimestamp = timestamp
         enqueue(CsvRow(timestamp = timestamp, tempCelsius = celsius))
@@ -128,14 +143,25 @@ object DataCapture {
     
     private fun writeToFile(row: CsvRow) {
         try {
+            // Rotate weekly file based on row timestamp
+            val thisWeek = weekId(row.timestamp)
+            if (thisWeek != currentWeekId) {
+                currentWeekId = thisWeek
+                csvFile = File(filesDir!!, fileNameForWeek(currentWeekId))
+                if (csvFile?.exists() == false) {
+                    csvFile?.writeText("timestamp,soc_raw,soc_pct,temp_celsius,speed_mph,distance_miles,lat,lon\n")
+                }
+                pruneOldCsvFiles()
+            }
+
             val file = csvFile ?: return
             
             // Rotate CSV if too large
             if (file.exists() && file.length() > MAX_CSV_FILE_SIZE) {
-                val backupFile = File(file.parent, "${CSV_FILE_NAME}.old")
+                val backupFile = File(file.parent, "${file.name}.old")
                 file.renameTo(backupFile)
                 file.writeText("timestamp,soc_raw,soc_pct,temp_celsius,speed_mph,distance_miles,lat,lon\n")
-                AppLogger.i("CSV file rotated to backup")
+                AppLogger.i("CSV file rotated due to size: ${backupFile.name}")
             }
             
             val line = buildCsvLine(row)
@@ -151,5 +177,37 @@ object DataCapture {
     }
     
     fun getCsvFilePath(): String? = csvFile?.absolutePath
+
+    private fun weekId(ts: Long): String {
+        val cal = Calendar.getInstance().apply { timeInMillis = ts }
+        val year = cal.get(Calendar.YEAR)
+        val week = cal.get(Calendar.WEEK_OF_YEAR)
+        return "%04d-%02d".format(year, week)
+    }
+
+    private fun fileNameForWeek(weekId: String): String = CSV_FILE_PREFIX + weekId + CSV_FILE_SUFFIX
+
+    private fun pruneOldCsvFiles() {
+        val dir = filesDir ?: return
+        val files = dir.listFiles { f -> f.name.startsWith(CSV_FILE_PREFIX) && f.name.endsWith(CSV_FILE_SUFFIX) }?.toList() ?: return
+        // Sort by week id in filename
+        val sorted = files.sortedBy { it.name.substring(CSV_FILE_PREFIX.length, it.name.length - CSV_FILE_SUFFIX.length) }
+        // Keep last 4 weeks
+        val toDelete = if (sorted.size > 4) sorted.subList(0, sorted.size - 4) else emptyList()
+        toDelete.forEach {
+            try {
+                it.delete()
+                AppLogger.i("DataCapture: Deleted old CSV ${it.name}")
+            } catch (e: Exception) {
+                AppLogger.w("DataCapture: Failed to delete ${it.name}: ${e.message}")
+            }
+        }
+    }
+
+    // Enforce min logging interval of 5 seconds for SOC and temp
+    private const val SOC_MIN_INTERVAL_MS = 5000L
+    private const val TEMP_MIN_INTERVAL_MS = 5000L
+    private var lastSocLoggedTs: Long = 0L
+    private var lastTempLoggedTs: Long = 0L
 
 }

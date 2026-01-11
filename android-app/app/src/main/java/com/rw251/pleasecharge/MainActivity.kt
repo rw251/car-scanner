@@ -18,7 +18,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.rw251.pleasecharge.ble.BleObdManager
 import com.rw251.pleasecharge.CommonBleListener.Callbacks
 import com.rw251.pleasecharge.databinding.ActivityMainBinding
@@ -84,7 +83,7 @@ class MainActivity : AppCompatActivity() {
     private var manager: BleObdManager? = null
     private var locationJob: Job? = null
     private var durationJob: Job? = null
-    private lateinit var bottomSheetBehavior: BottomSheetBehavior<View>
+    // Removed BottomSheetBehavior since bottom panel is now static
     
     // Place pickers
     private var originPlacePicker: AutocompleteSupportFragment? = null
@@ -95,6 +94,7 @@ class MainActivity : AppCompatActivity() {
     private var originLatLng: LatLng? = null
     private var navigationActive: Boolean = false
     private var routePanelVisible: Boolean = false
+    private var appPaused: Boolean = false
     
     // Track current stats for display
     private var currentSocPct: Double? = null
@@ -106,13 +106,9 @@ class MainActivity : AppCompatActivity() {
     private var currentRoutePolyline: String? = null
     private var chargerMinDistanceMiles: Int = 0 // Default 0 miles from start
     private var chargerMaxDistanceMiles: Int = 300 // Default 300 miles from start
-    private var includeCCSConnectors: Boolean = true // Default CCS on
-    private var includeType2Connectors: Boolean = false // Default Type 2 off
     
     // Track what has been fetched from API
     private var lastFetchedMaxDistanceMiles: Int = 0
-    private var fetchedWithCCS: Boolean = false
-    private var fetchedWithType2: Boolean = false
     private var allFetchedChargers: List<ChargingPoint> = emptyList() // Raw unfiltered results
 
     // Route polyline tracking
@@ -129,10 +125,14 @@ class MainActivity : AppCompatActivity() {
 
     // Charger list tracking
     private var allChargingPoints: List<ChargingPoint> = emptyList()
+    private var currentDisplayedChargers: List<ChargingPoint> = emptyList() // Chargers currently shown in 3-slot UI
     private var currentLocationMeters: Double = 0.0 // Current distance along route in meters
 
     private lateinit var mRoadSnappedLocationProvider: RoadSnappedLocationProvider
     private lateinit var mLocationListener: RoadSnappedLocationProvider.LocationListener
+    private var lastChargerUpdateTimeMs: Long = 0
+    private var lastDistanceCalcTimeMs: Long = 0
+    private var lastDistanceMeters: Double = 0.0
 
     // Make navigator and routing options nullable as they're initialized later
     var mNavigator: Navigator? = null
@@ -164,7 +164,6 @@ class MainActivity : AppCompatActivity() {
         val operator: String = "Unknown",
         val status: String = "Unknown",
         val ccsPoints: Int = 0,
-        val type2Points: Int = 0,
         var distanceAlongRoute: Double = 0.0, // meters from route start
         var deviationSeconds: Long? = null, // additional time vs direct route
         var routeToChargerSeconds: Long? = null,
@@ -267,7 +266,7 @@ class MainActivity : AppCompatActivity() {
         initializeNavigator()
         initializePlacePickers()
         loadOpenChargeMapReferenceData()
-        setupBottomSheet()
+        setupTabs()
         setupUI()
         observeViewModel()
     }
@@ -354,41 +353,11 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         })
-
-        // Requirement 5: CCS and Type 2 toggle buttons
-        binding.connectorCcsToggle.isChecked = includeCCSConnectors
-        binding.connectorType2Toggle.isChecked = includeType2Connectors
-        
-        binding.connectorCcsToggle.setOnCheckedChangeListener { _, isChecked ->
-            includeCCSConnectors = isChecked
-            AppLogger.i("CCS filter: $isChecked")
-            checkIfRefetchNeeded()
-        }
-        
-        binding.connectorType2Toggle.setOnCheckedChangeListener { _, isChecked ->
-            includeType2Connectors = isChecked
-            AppLogger.i("Type 2 filter: $isChecked")
-            checkIfRefetchNeeded()
-        }
         
         // Hide refetch button initially
         binding.refetchChargersButton.visibility = View.GONE
         binding.refetchChargersButton.setOnClickListener {
             refetchChargers()
-        }
-    }
-    
-    private fun checkIfRefetchNeeded() {
-        // Requirement 6: Only show prompt if we need data we don't have
-        val needsCCS = includeCCSConnectors && !fetchedWithCCS
-        val needsType2 = includeType2Connectors && !fetchedWithType2
-        
-        if (needsCCS || needsType2) {
-            showRefetchPrompt()
-        } else {
-            // We have all the data we need, just refilter
-            applyFiltersAndUpdateChargerList()
-            binding.refetchChargersButton.visibility = View.GONE
         }
     }
     
@@ -404,14 +373,8 @@ class MainActivity : AppCompatActivity() {
         if (origin != null && destination != null) {
             lifecycleScope.launch {
                 showRouteStatus("Fetching chargers...")
-                allFetchedChargers = fetchChargingPoints(
-                    currentRoutePolyline, 
-                    includeCCS = includeCCSConnectors, 
-                    includeType2 = includeType2Connectors
-                )
+                allFetchedChargers = fetchChargingPoints(currentRoutePolyline)
                 lastFetchedMaxDistanceMiles = chargerMaxDistanceMiles
-                if (includeCCSConnectors) fetchedWithCCS = true
-                if (includeType2Connectors) fetchedWithType2 = true
                 
                 applyFiltersAndUpdateChargerList()
                 binding.refetchChargersButton.visibility = View.GONE
@@ -422,17 +385,11 @@ class MainActivity : AppCompatActivity() {
     
     private fun applyFiltersAndUpdateChargerList() {
         if (allFetchedChargers.isEmpty()) return
-        
-        // Filter by connector type
-        val connectorFiltered = allFetchedChargers.filter { point ->
-            (includeCCSConnectors && point.ccsPoints > 0) || 
-            (includeType2Connectors && point.type2Points > 0)
-        }
-        
+              
         // Filter by distance range
         val minMeters = chargerMinDistanceMiles * 1609.344
         val maxMeters = chargerMaxDistanceMiles * 1609.344
-        val distanceFiltered = connectorFiltered.filter { point ->
+        val distanceFiltered = allFetchedChargers.filter { point ->
             point.distanceAlongRoute >= minMeters && point.distanceAlongRoute <= maxMeters
         }
         
@@ -620,10 +577,8 @@ class MainActivity : AppCompatActivity() {
                 
                 // Now fetch charging points after directRouteDurationSeconds is set
                 showRouteStatus("Finding chargers...")
-                allFetchedChargers = fetchChargingPoints(currentRoutePolyline, includeCCS = includeCCSConnectors, includeType2 = includeType2Connectors)
+                allFetchedChargers = fetchChargingPoints(currentRoutePolyline)
                 lastFetchedMaxDistanceMiles = chargerMaxDistanceMiles
-                fetchedWithCCS = includeCCSConnectors
-                fetchedWithType2 = includeType2Connectors
                 
                 // Apply filters to get the active list
                 applyFiltersAndUpdateChargerList()
@@ -631,8 +586,9 @@ class MainActivity : AppCompatActivity() {
                 
                 showRouteStatus("Ready")
                 displayRouteInfo(origin, destination)
-                // Show charger list overlay
-                binding.chargerListOverlay.visibility = View.VISIBLE
+                // Show charger list overlay and switch to Chargers tab
+                binding.mainTabs.getTabAt(0)?.select()
+                // binding.chargerListOverlay.visibility = View.VISIBLE
                 // Hide status after a short delay
                 delay(1500)
                 hideRouteStatus()
@@ -661,7 +617,16 @@ class MainActivity : AppCompatActivity() {
 
         binding.routeInfoPanel.visibility = View.VISIBLE
         binding.startNavigationButton.setOnClickListener {
-            startNavigation(destination)
+            startNavigation(destination, simulate = false)
+        }
+        // Show fake start only in debug builds
+        if (BuildConfig.DEBUG) {
+            binding.fakeStartNavigationButton.visibility = View.VISIBLE
+            binding.fakeStartNavigationButton.setOnClickListener {
+                startNavigation(destination, simulate = true)
+            }
+        } else {
+            binding.fakeStartNavigationButton.visibility = View.GONE
         }
     }
 
@@ -676,9 +641,9 @@ class MainActivity : AppCompatActivity() {
         return r * c
     }
 
-    private fun startNavigation(destination: LatLng) {
-        AppLogger.i("startNavigation: destination=${destination.latitude},${destination.longitude}")
-        navigateToPlace(destination)
+    private fun startNavigation(destination: LatLng, simulate: Boolean) {
+        AppLogger.i("startNavigation: destination=${destination.latitude},${destination.longitude}, simulate=$simulate")
+        navigateToPlace(destination, simulate)
     }
 
     private fun displayMessage(message: String) {
@@ -689,15 +654,16 @@ class MainActivity : AppCompatActivity() {
         routePanelVisible = !routePanelVisible
         binding.routePlanningPanel.visibility = if (routePanelVisible) View.VISIBLE else View.GONE
         if (routePanelVisible) {
-            binding.routeToggleButton.text = getString(R.string.hide_planner)
+            binding.routeToggleButton.visibility = View.GONE
         } else {
+            binding.routeToggleButton.visibility = View.VISIBLE
             binding.routeToggleButton.text = if (navigationActive) "Stop navigation" else "Plan route"
         }
     }
 
     private fun setNavigationActive(active: Boolean) {
         navigationActive = active
-        binding.navigationStatusChip.visibility = if (active) View.VISIBLE else View.GONE
+        binding.routeToggleButton.visibility = View.VISIBLE
         binding.routeToggleButton.text = if (active) "Stop navigation" else "Plan route"
         if (active) {
             binding.routePlanningPanel.visibility = View.GONE
@@ -724,19 +690,18 @@ class MainActivity : AppCompatActivity() {
         allChargingPoints = emptyList()
         allFetchedChargers = emptyList()
         lastFetchedMaxDistanceMiles = 0
-        fetchedWithCCS = false
-        fetchedWithType2 = false
         
         // Clear map markers
         chargerMarkers.forEach { it.remove() }
         chargerMarkers.clear()
         
-        binding.chargerListOverlay.visibility = View.GONE
+        showStats()
+        // binding.chargerListOverlay.visibility = View.GONE
         binding.refetchChargersButton.visibility = View.GONE
         setNavigationActive(false)
     }
 
-    fun navigateToPlace(destination: LatLng) {
+    fun navigateToPlace(destination: LatLng, simulate: Boolean) {
         AppLogger.i("navigateToPlace called for ${destination.latitude},${destination.longitude}")
         val navigator = mNavigator
         
@@ -780,7 +745,7 @@ class MainActivity : AppCompatActivity() {
                     registerNavigationListeners()
 
                     displayMessage("Route calculated successfully.")
-                    if (BuildConfig.DEBUG) {
+                    if (BuildConfig.DEBUG && simulate) {
                         AppLogger.i("navigateToPlace: Starting location simulation at 5x speed")
                         navigator
                             .simulator
@@ -822,12 +787,26 @@ class MainActivity : AppCompatActivity() {
             // Update location in navigator
             AppLogger.i("Navigator location update: lat=${location.latitude}, lon=${location.longitude}")
 
-            // Update current position along route and charger list
             if (navigationActive && allChargingPoints.isNotEmpty() && decodedRoutePath.isNotEmpty()) {
-                currentLocationMeters = calculateDistanceAlongRoute(location.latitude, location.longitude)
-                updateChargerListDisplay()
-                // Highlight nearby chargers on map
-                highlightNearbyChargers()
+                val now = System.currentTimeMillis()
+                // First debounce: only compute distance along route once per second
+                if (now - lastDistanceCalcTimeMs >= 1000) {
+                    AppLogger.i("Time since last distance calc: ${now - lastDistanceCalcTimeMs}ms")
+                    lastDistanceCalcTimeMs = now
+                    val newMeters = calculateDistanceAlongRoute(location.latitude, location.longitude)
+                    val delta = newMeters - lastDistanceMeters
+                    lastDistanceMeters = newMeters
+                    currentLocationMeters = newMeters
+
+                    // Second debounce: only update chargers if moved >100 meters
+                    if (delta >= 100.0) {
+                        AppLogger.i("Movement >100m (${delta}m); updating charger list")
+                        updateChargerListDisplay()
+                        highlightNearbyChargers()
+                    } else {
+                        AppLogger.d("Movement <100m (${delta}m); skipping charger update")
+                    }
+                }
             }
         }
         mRoadSnappedLocationProvider.addLocationListener(mLocationListener)
@@ -1171,12 +1150,8 @@ class MainActivity : AppCompatActivity() {
     /**
      * Fetch charging points from OpenChargeMap API using the route polyline
      */
-    suspend fun fetchChargingPoints(
-        polylineString: String?,
-        includeCCS: Boolean = true,
-        includeType2: Boolean = false
-    ): List<ChargingPoint> = withContext(Dispatchers.IO) {
-        AppLogger.i("fetchChargingPoints: polyline length=${polylineString?.length}, CCS=$includeCCS, Type2=$includeType2")
+    suspend fun fetchChargingPoints(polylineString: String?): List<ChargingPoint> = withContext(Dispatchers.IO) {
+        AppLogger.i("fetchChargingPoints: polyline length=${polylineString?.length}")
 
         try {
             val apiKey = BuildConfig.OPEN_CHARGE_MAP_API_KEY
@@ -1200,19 +1175,16 @@ class MainActivity : AppCompatActivity() {
 
             // Build connector type filters
             val ccsIds = mutableListOf<Int>()
-            val type2Ids = mutableListOf<Int>()
             openChargeMapRefData?.connectionTypes?.forEach { ct ->
                 val title = (ct["Title"] as? String ?: "").lowercase()
                 val id = ct["ID"] as? Int ?: return@forEach
                 when {
                     title.contains("ccs") -> ccsIds.add(id)
-                    title.contains("type 2") -> type2Ids.add(id)
                 }
             }
 
             val connectorIds = mutableListOf<Int>()
-            if (includeCCS) connectorIds.addAll(ccsIds)
-            if (includeType2) connectorIds.addAll(type2Ids)
+            connectorIds.addAll(ccsIds)
 
             if (connectorIds.isNotEmpty()) {
                 params["connectiontypeid"] = connectorIds.distinct().joinToString(",")
@@ -1256,13 +1228,9 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // Calculate CCS and Type2 points
+                // Calculate CCS points
                 val ccsPoints = connections
                     .filter { (it["ConnectionTypeID"] as? Int) in ccsIds }
-                    .sumOf { (it["Quantity"] as? Int) ?: 1 }
-
-                val type2Points = connections
-                    .filter { (it["ConnectionTypeID"] as? Int) in type2Ids }
                     .sumOf { (it["Quantity"] as? Int) ?: 1 }
 
                 val point = ChargingPoint(
@@ -1276,7 +1244,6 @@ class MainActivity : AppCompatActivity() {
                     operator = getOperatorName(pointJson.optInt("OperatorID", 0).takeIf { it != 0 }),
                     status = getStatusType(pointJson.optInt("StatusTypeID", 0).takeIf { it != 0 }),
                     ccsPoints = ccsPoints,
-                    type2Points = type2Points
                 )
                 
                 chargingPoints.add(point)
@@ -1518,57 +1485,52 @@ class MainActivity : AppCompatActivity() {
     //     }
     //     binding.mapView.overlays.add(locationMarker)
     // }
-    
-    private fun setupBottomSheet() {
-        bottomSheetBehavior = BottomSheetBehavior.from(binding.bottomSheet)
+
+    private fun showStats() {
+        binding.bottomSheet.visibility = View.VISIBLE
+        binding.chargerListOverlay.visibility = View.GONE
+        binding.actionTabOverlay.visibility = View.GONE
+    }
+    private fun showChargers() {
+        binding.bottomSheet.visibility = View.GONE
+        binding.chargerListOverlay.visibility = View.VISIBLE
+        binding.actionTabOverlay.visibility = View.GONE
+    }
+    private fun showActions() {
+        binding.bottomSheet.visibility = View.GONE
+        binding.chargerListOverlay.visibility = View.GONE
+        binding.actionTabOverlay.visibility = View.VISIBLE
+    }
         
-        val basePeekHeight = resources.getDimensionPixelSize(R.dimen.bottom_sheet_peek_height)
-        
-        bottomSheetBehavior.apply {
-            peekHeight = basePeekHeight + navBarHeight
-            isHideable = false
-            isFitToContents = true
-            state = BottomSheetBehavior.STATE_COLLAPSED
-        }
-        
-        // Add padding for navigation bar (use fixed value, not cumulative)
-        val basePadding = resources.getDimensionPixelSize(R.dimen.activity_vertical_margin)
-        binding.bottomSheet.setPadding(
-            binding.bottomSheet.paddingLeft,
-            binding.bottomSheet.paddingTop,
-            binding.bottomSheet.paddingRight,
-            basePadding + navBarHeight
-        )
-        
-        // Initially hide expanded content
-        binding.expandedContent.alpha = 0f
-        
-        // Toggle expanded content visibility based on state
-        bottomSheetBehavior.addBottomSheetCallback(object : BottomSheetBehavior.BottomSheetCallback() {
-            override fun onStateChanged(bottomSheet: View, newState: Int) {
-                // Don't hide the view, just control alpha
-                when (newState) {
-                    BottomSheetBehavior.STATE_EXPANDED -> {
-                        binding.expandedContent.alpha = 1f
-                    }
-                    BottomSheetBehavior.STATE_COLLAPSED -> {
-                        binding.expandedContent.alpha = 0f
-                    }
-                    else -> { /* Keep current alpha */ }
+    private fun setupTabs() {
+        // Initialize tabs: Chargers and Bottom Panel
+        val tabs = binding.mainTabs
+        tabs.addTab(tabs.newTab().setText("Chargers"))
+        tabs.addTab(tabs.newTab().setText("Stats"))
+        tabs.addTab(tabs.newTab().setText("Actions"))
+
+        // Default to Stats tab
+        tabs.getTabAt(1)?.select()
+
+        // Ensure initial visibility
+        showStats()
+
+        tabs.addOnTabSelectedListener(object : com.google.android.material.tabs.TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: com.google.android.material.tabs.TabLayout.Tab) {
+                when (tab.position) {
+                    0 -> showChargers()
+                    1 -> showStats()
+                    2 -> showActions()
                 }
             }
-
-            override fun onSlide(bottomSheet: View, slideOffset: Float) {
-                // Fade in/out expanded content as sheet slides
-                binding.expandedContent.alpha = slideOffset.coerceIn(0f, 1f)
-            }
+            override fun onTabUnselected(tab: com.google.android.material.tabs.TabLayout.Tab) {}
+            override fun onTabReselected(tab: com.google.android.material.tabs.TabLayout.Tab) {}
         })
     }
 
     @SuppressLint("MissingPermission")
     private fun setupUI() {
         binding.routePlanningPanel.visibility = View.GONE
-        binding.navigationStatusChip.visibility = View.GONE
         binding.routeToggleButton.text = getString(R.string.plan_route)
 
         binding.routeToggleButton.setOnClickListener {
@@ -1579,6 +1541,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        binding.cancelButton.setOnClickListener {
+            cancelRouteAndClosePanel()
+        }
+
         // Bottom sheet buttons
         binding.viewLogsButton.setOnClickListener {
             startActivity(Intent(this, LogViewerActivity::class.java))
@@ -1587,9 +1553,166 @@ class MainActivity : AppCompatActivity() {
         binding.exportButton.setOnClickListener {
             exportDataFiles()
         }
+        // Pause/Resume background activity
+        binding.pauseResumeButton.setOnClickListener {
+            if (appPaused) {
+                resumeApp()
+            } else {
+                pauseApp()
+            }
+        }
         
         // Auto-start connection - check permissions first
         ensurePermissionsAndStart()
+
+        // Set up charger selection click handlers
+        setupChargerSelectionHandlers()
+    }
+
+    private fun cancelRouteAndClosePanel() {
+        // Stop any active navigation and clear route state
+        stopNavigation()
+        currentRouteToken = null
+        currentRoutePolyline = null
+        decodedRoutePath = emptyList()
+        routeCumulativeDistances = emptyList()
+        routeOrigin = null
+        routeDestination = null
+        directRouteDurationSeconds = 0
+        routePanelVisible = false
+
+        // Hide planner and overlays
+        binding.routePlanningPanel.visibility = View.GONE
+        binding.routeInfoPanel.visibility = View.GONE
+        binding.routeStatusOverlay.visibility = View.GONE
+        binding.refetchChargersButton.visibility = View.GONE
+        // binding.chargerListOverlay.visibility = View.GONE
+        showStats()
+
+         // Reset route button text
+        binding.routeToggleButton.text = getString(R.string.plan_route)
+    }
+
+    private fun pauseApp() {
+        appPaused = true
+        binding.pauseResumeButton.text = "Resume app"
+        AppLogger.i("Pausing app: stopping foreground service, BLE, and location listener")
+        // Stop BLE manager in activity
+        try { manager?.stop() } catch (_: Exception) {}
+        // Stop foreground service
+        val intent = Intent(this, BleForegroundService::class.java).apply { action = BleForegroundService.ACTION_STOP }
+        startService(intent)
+        // Stop navigator guidance but keep route and UI state
+        try { mNavigator?.stopGuidance() } catch (_: Exception) {}
+        // Remove location listener
+        try { if(::mRoadSnappedLocationProvider.isInitialized) mRoadSnappedLocationProvider.removeLocationListener(mLocationListener) } catch (_: Exception) {}
+    }
+
+    private fun resumeApp() {
+        appPaused = false
+        binding.pauseResumeButton.text = "Pause app"
+        AppLogger.i("Resuming app: starting foreground service and re-registering listeners")
+        // Restart foreground service
+        val intent = Intent(this, BleForegroundService::class.java).apply { action = BleForegroundService.ACTION_START }
+        startForegroundService(intent)
+        // Restart BLE manager in activity (will reuse shared manager)
+        try { startBleManager() } catch (_: Exception) {}
+        // Re-register navigation listeners if we have a navigator
+        try { registerNavigationListeners() } catch (_: Exception) {}
+    }
+
+    private fun setupChargerSelectionHandlers() {
+        binding.charger1Container.setOnClickListener { handleChargerSelected(0) }
+        binding.charger2Container.setOnClickListener { handleChargerSelected(1) }
+        binding.charger3Container.setOnClickListener { handleChargerSelected(2) }
+    }
+
+    private fun handleChargerSelected(index: Int) {
+        if (index < currentDisplayedChargers.size) {
+            val charger = currentDisplayedChargers[index]
+            AppLogger.i("Charger selected: ${charger.title} (${charger.latitude},${charger.longitude})")
+            plotRouteViaCharger(charger)
+        } else {
+            AppLogger.w("Charger index ${index} is out of range for currentDisplayedChargers=${currentDisplayedChargers.size}")
+        }
+    }
+
+    private fun plotRouteViaCharger(charger: ChargingPoint) {
+        val navigator = mNavigator
+        val dest = routeDestination
+        if (navigator == null) {
+            AppLogger.e("plotRouteViaCharger: Navigator not initialized")
+            displayMessage("Navigator not initialized yet.")
+            return
+        }
+        if (dest == null) {
+            AppLogger.w("plotRouteViaCharger: Destination not set")
+            displayMessage("Please select a destination first.")
+            return
+        }
+
+        val routeToken = currentRouteToken
+        if (routeToken.isNullOrBlank()) {
+            AppLogger.w("plotRouteViaCharger: Route token not ready")
+            displayMessage("Route not ready yet. Please retry.")
+            return
+        }
+
+        val viaWaypoint: Waypoint
+        val destWaypoint: Waypoint
+        try {
+            viaWaypoint = Waypoint.builder()
+                .setTitle(charger.title ?: "Charger")
+                .setLatLng(charger.latitude, charger.longitude)
+                .build()
+            destWaypoint = Waypoint.builder()
+                .setTitle("Destination")
+                .setLatLng(dest.latitude, dest.longitude)
+                .build()
+        } catch (e: Waypoint.UnsupportedPlaceIdException) {
+            displayMessage("Error creating waypoint: ${e.message}")
+            return
+        }
+
+        val customRoutesOptions = CustomRoutesOptions.builder()
+            .setRouteToken(routeToken)
+            .setTravelMode(CustomRoutesOptions.TravelMode.DRIVING)
+            .build()
+
+        // Show large overlay while rerouting
+        showRouteStatus("Rerouting via charger...")
+
+        val pendingRoute = navigator.setDestinations(listOf(viaWaypoint, destWaypoint), customRoutesOptions)
+        pendingRoute.setOnResultListener { code ->
+            when (code) {
+                Navigator.RouteStatus.OK -> {
+                    AppLogger.i("plotRouteViaCharger: RouteStatus.OK - route updated via charger")
+                    displayMessage("Route updated via charger.")
+                    // Keep current navigation UI state (do not reset to 'Plan route')
+                    hideRouteStatus()
+                }
+                Navigator.RouteStatus.NO_ROUTE_FOUND -> {
+                    AppLogger.w("plotRouteViaCharger: No route found")
+                    displayMessage("No route found.")
+                    hideRouteStatus()
+                }
+                Navigator.RouteStatus.NETWORK_ERROR -> {
+                    AppLogger.e("plotRouteViaCharger: Network error while calculating route")
+                    displayMessage("Network error while calculating route.")
+                    hideRouteStatus()
+                }
+                Navigator.RouteStatus.ROUTE_CANCELED -> {
+                    AppLogger.w("plotRouteViaCharger: Route calculation canceled")
+                    displayMessage("Route calculation canceled.")
+                    hideRouteStatus()
+                }
+                else -> {
+                    AppLogger.e("plotRouteViaCharger: Error calculating route: $code")
+                    displayMessage("Error calculating route: $code")
+                    hideRouteStatus()
+                }
+            }
+        }
     }
 
     @SuppressLint("SetTextI18n")
@@ -1645,9 +1768,9 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     ServiceStatus.isServiceRunning.collect { isRunning ->
                         if (!isRunning) {
-                            // Service has stopped - hide text, show red bar only, remove padding
+                            // Service has stopped - hide text, show grey bar only, remove padding
                             binding.topBleStatus.visibility = View.GONE
-                            binding.topStatusPanel.setBackgroundColor("#F44336".toColorInt())
+                            binding.topStatusPanel.setBackgroundColor("#a5a5a5".toColorInt())
                             binding.topTimeoutCountdown.visibility = View.GONE
                             binding.topStatusPanel.setPadding(0, 0, 0, 0)
                             binding.topStatusPanel.layoutParams.height = topBarHeight
@@ -1661,10 +1784,10 @@ class MainActivity : AppCompatActivity() {
     private fun updateBleStatus(state: BleObdManager.State) {
        
         // Update top status bar color based on BLE state
-        // Green when connected, Red when disconnected, Blue for other states
+        // Green when connected, Grey when disconnected, Blue for other states
         val barColor = when (state) {
             BleObdManager.State.READY -> "#4CAF50".toColorInt()  // Green when connected
-            BleObdManager.State.DISCONNECTED -> "#F44336".toColorInt()  // Red when disconnected
+            BleObdManager.State.DISCONNECTED -> "#a5a5a5".toColorInt()  // Grey when disconnected
             else -> "#2196F3".toColorInt()  // Blue for scanning, connecting, discovering, configuring
         }
         binding.topStatusPanel.setBackgroundColor(barColor)
@@ -1734,6 +1857,7 @@ class MainActivity : AppCompatActivity() {
         val nextChargers = allChargingPoints
             .filter { it.distanceAlongRoute >= currentLocationMeters }
             .take(3)
+        currentDisplayedChargers = nextChargers
         
         // Debug logging
         if (nextChargers.isNotEmpty()) {
@@ -1828,7 +1952,8 @@ class MainActivity : AppCompatActivity() {
                     viewModel.setLocationStats(it.totalTripDistanceMiles, it.averageSpeedMph)
                     // Update current location and default origin
                     currentLocation = LatLng(it.lat, it.lon)
-                    if (originPlace == null) {
+                    // Only set default origin once to avoid re-planning loop while moving
+                    if (originPlace == null && originLatLng == null && !navigationActive) {
                         originLatLng = currentLocation
                         originPlacePicker?.setText("Current location")
                         if (destinationPlace != null) {

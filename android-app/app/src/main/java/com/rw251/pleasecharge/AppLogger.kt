@@ -19,10 +19,13 @@ import java.util.concurrent.ConcurrentLinkedQueue
  */
 object AppLogger {
     private const val TAG = "PleaseCharge"
-    private const val LOG_FILE_NAME = "app_log.txt"
+    private const val LOG_FILE_PREFIX = "app_log_" // e.g., app_log_2026-02.txt
+    private const val LOG_FILE_SUFFIX = ".txt"
     private const val MAX_LOG_FILE_SIZE = 5 * 1024 * 1024  // 5 MB
     
     private var logFile: File? = null
+    private var filesDir: File? = null
+    private var currentWeekId: String = ""
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val writeQueue = ConcurrentLinkedQueue<String>()
     // private val memoryBuffer = ArrayDeque<String>()
@@ -32,7 +35,9 @@ object AppLogger {
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US)
     
     fun init(context: Context) {
-        logFile = File(context.filesDir, LOG_FILE_NAME)
+        filesDir = context.filesDir
+        currentWeekId = weekId(System.currentTimeMillis())
+        logFile = File(filesDir!!, fileNameForWeek(currentWeekId))
         i("AppLogger initialized - log file: ${logFile?.absolutePath}")
         
         // Start background writer
@@ -100,11 +105,18 @@ object AppLogger {
     
     private fun writeToFile(line: String) {
         try {
+            // Rotate weekly by time
+            val thisWeek = weekId(System.currentTimeMillis())
+            if (thisWeek != currentWeekId) {
+                currentWeekId = thisWeek
+                logFile = File(filesDir!!, fileNameForWeek(currentWeekId))
+                pruneOldLogFiles()
+            }
             val file = logFile ?: return
             
             // Rotate log if too large
             if (file.exists() && file.length() > MAX_LOG_FILE_SIZE) {
-                val backupFile = File(file.parent, "${LOG_FILE_NAME}.old")
+                val backupFile = File(file.parent, "${file.name}.old")
                 file.renameTo(backupFile)
             }
             
@@ -115,6 +127,25 @@ object AppLogger {
     }
     
     fun getLogFilePath(): String? = logFile?.absolutePath
+
+    private fun weekId(ts: Long): String {
+        val cal = Calendar.getInstance().apply { timeInMillis = ts }
+        val year = cal.get(Calendar.YEAR)
+        val week = cal.get(Calendar.WEEK_OF_YEAR)
+        return "%04d-%02d".format(year, week)
+    }
+
+    private fun fileNameForWeek(weekId: String): String = LOG_FILE_PREFIX + weekId + LOG_FILE_SUFFIX
+
+    private fun pruneOldLogFiles() {
+        val dir = filesDir ?: return
+        val files = dir.listFiles { f -> f.name.startsWith(LOG_FILE_PREFIX) && f.name.endsWith(LOG_FILE_SUFFIX) }?.toList() ?: return
+        val sorted = files.sortedBy { it.name.substring(LOG_FILE_PREFIX.length, it.name.length - LOG_FILE_SUFFIX.length) }
+        val toDelete = if (sorted.size > 4) sorted.subList(0, sorted.size - 4) else emptyList()
+        toDelete.forEach {
+            try { it.delete(); i("AppLogger: Deleted old log ${it.name}") } catch (e: Exception) { w("AppLogger: Failed to delete ${it.name}: ${e.message}") }
+        }
+    }
     
     fun getLogFileContent(): String {
         return try {
