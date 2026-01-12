@@ -133,6 +133,10 @@ class MainActivity : AppCompatActivity() {
     private var lastDistanceCalcTimeMs: Long = 0
     private var lastDistanceMeters: Double = 0.0
 
+    // Navigation event listeners
+    private var routeChangedListener: Navigator.RouteChangedListener? = null
+    private var arrivalListener: Navigator.ArrivalListener? = null
+
     // Make navigator and routing options nullable as they're initialized later
     var mNavigator: Navigator? = null
     var mRoutingOptions: RoutingOptions? = null
@@ -676,6 +680,11 @@ class MainActivity : AppCompatActivity() {
             mNavigator?.simulator?.unsetUserLocation()
 
             mNavigator?.stopGuidance()
+            
+            // Unregister navigation event listeners
+            routeChangedListener?.let { mNavigator?.removeRouteChangedListener(it) }
+            arrivalListener?.let { mNavigator?.removeArrivalListener(it) }
+            
             // Clear the route from the map
             mNavigator?.clearDestinations()
             if(::mRoadSnappedLocationProvider.isInitialized) {
@@ -745,7 +754,7 @@ class MainActivity : AppCompatActivity() {
 
                     displayMessage("Route calculated successfully.")
                     if (BuildConfig.DEBUG && simulate) {
-                        AppLogger.i("navigateToPlace: Starting location simulation at 5x speed")
+                        AppLogger.i("navigateToPlace: Starting location simulation at 15x speed")
                         navigator
                             .simulator
                             .simulateLocationsAlongExistingRoute(
@@ -753,6 +762,10 @@ class MainActivity : AppCompatActivity() {
                     }
                     // Start guidance
                     navigator.startGuidance()
+                    
+                    // Register route change and arrival listeners
+                    registerRouteAndArrivalListeners()
+                    
                     displayMessage("Navigation started.")
                     setNavigationActive(true)
                     AppLogger.i("Navigation started")
@@ -809,6 +822,86 @@ class MainActivity : AppCompatActivity() {
             }
         }
         mRoadSnappedLocationProvider.addLocationListener(mLocationListener)
+    }
+
+    private fun registerRouteAndArrivalListeners() {
+        val navigator = mNavigator ?: return
+        
+        // Register route changed listener for reroutes
+        routeChangedListener = Navigator.RouteChangedListener {
+            AppLogger.i("Route changed event received - performing reroute handling")
+            lifecycleScope.launch {
+                try {
+                    handleReroute()
+                } catch (e: Exception) {
+                    AppLogger.e("Error handling reroute: ${e.message}")
+                }
+            }
+        }
+        routeChangedListener?.let { navigator.addRouteChangedListener(it) }
+        
+        // Register arrival listener for waypoint arrivals
+        arrivalListener = Navigator.ArrivalListener {
+            AppLogger.i("Arrival event received - handling waypoint arrival")
+            handleWaypointArrival()
+        }
+        arrivalListener?.let { navigator.addArrivalListener(it) }
+    }
+
+    private suspend fun handleReroute() {
+        AppLogger.i("Handling reroute: fetching new route and updating chargers")
+        val navigator = mNavigator ?: return
+        
+        try {
+            // The navigator automatically updates its route
+            // We need to reset our distance tracking for the new route
+            currentLocationMeters = 0.0
+            lastDistanceMeters = 0.0
+            lastDistanceCalcTimeMs = 0
+            
+            // Re-fetch chargers from OpenChargeMap for the new route
+            AppLogger.i("Reroute: re-fetching chargers from OpenChargeMap for new route")
+            showRouteStatus("Reroute detected - fetching chargers...")
+            
+            allFetchedChargers = fetchChargingPoints(currentRoutePolyline)
+            lastFetchedMaxDistanceMiles = chargerMaxDistanceMiles
+            AppLogger.i("Reroute: fetched ${allFetchedChargers.size} chargers from OpenChargeMap")
+            
+            // Apply filters to get the active list
+            applyFiltersAndUpdateChargerList()
+            AppLogger.i("Reroute: ${allChargingPoints.size} chargers after filtering")
+            
+            // Update map markers
+            updateChargerMarkers()
+            
+            // Update the next 3 charger panel
+            highlightNearbyChargers()
+            
+            hideRouteStatus()
+            displayMessage("Route updated - chargers recalculated")
+        } catch (e: Exception) {
+            AppLogger.e("Error during reroute handling: ${e.message}")
+            hideRouteStatus()
+            displayMessage("Error updating route")
+        }
+    }
+
+    private fun handleWaypointArrival() {
+        AppLogger.i("Handling waypoint arrival")
+        val navigator = mNavigator ?: return
+        
+        try {
+            // Mark the current waypoint as passed and move to next
+            AppLogger.i("Waypoint arrived - continuing to next destination")
+            displayMessage("Arrived at waypoint - continuing to next destination")
+            // The navigator automatically handles moving to the next waypoint
+            // We just need to continue the simulation if active
+            if (BuildConfig.DEBUG && navigator.simulator != null) {
+                AppLogger.d("Continuing navigation with simulator")
+            }
+        } catch (e: Exception) {
+            AppLogger.e("Error handling waypoint arrival: ${e.message}")
+        }
     }
 
     private suspend fun fetchRouteTokenAndPolyline(
