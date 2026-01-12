@@ -1689,16 +1689,27 @@ class MainActivity : AppCompatActivity() {
     private fun pauseApp() {
         appPaused = true
         binding.pauseResumeButton.text = getString(R.string.resume_app)
-        AppLogger.i("Pausing app: stopping foreground service, BLE, and location listener")
-        // Stop BLE manager in activity
+        AppLogger.i("Pausing app: stopping everything (BLE, navigation, foreground service)")
+        
+        // Stop navigation if active
+        if (navigationActive) {
+            stopNavigation()
+        }
+        
+        // Stop BLE manager in activity - this will cleanly disconnect
         try { manager?.stop() } catch (_: Exception) {}
+        
         // Stop foreground service
         val intent = Intent(this, BleForegroundService::class.java).apply { action = BleForegroundService.ACTION_STOP }
         startService(intent)
-        // Stop navigator guidance but keep route and UI state
+        
+        // Stop navigator guidance
         try { mNavigator?.stopGuidance() } catch (_: Exception) {}
+        
         // Remove location listener
         try { if(::mRoadSnappedLocationProvider.isInitialized) mRoadSnappedLocationProvider.removeLocationListener(mLocationListener) } catch (_: Exception) {}
+        
+        AppLogger.i("App paused - all services stopped")
     }
 
     @RequiresPermission(allOf = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT])
