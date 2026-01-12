@@ -78,6 +78,7 @@ dependencies {
         // Navigation SDK already brings Google Maps classes; exclude the maps module from Places
         exclude(group = "com.google.android.gms", module = "play-services-maps")
     }
+    // implementation("com.google.maps.android:android-maps-utils:3.8.2")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

@@ -8,8 +8,6 @@ import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
-import android.widget.LinearLayout
-import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.annotation.RequiresPermission
@@ -423,8 +421,8 @@ class MainActivity : AppCompatActivity() {
             // Choose icon based on number of CCS chargers
             val iconResource = when {
                 charger.ccsPoints == 1 -> R.drawable.ic_charger_single
-                charger.ccsPoints in 2..6 -> R.drawable.ic_charger_medium
-                charger.ccsPoints > 6 -> R.drawable.ic_charger_large
+                charger.ccsPoints in 2..8 -> R.drawable.ic_charger_medium
+                charger.ccsPoints > 8 -> R.drawable.ic_charger_large
                 else -> R.drawable.ic_charger_single
             }
             
@@ -497,6 +495,10 @@ class MainActivity : AppCompatActivity() {
 
         originPlacePicker?.apply {
             setPlaceFields(listOf(Place.Field.ID, Place.Field.NAME, Place.Field.LAT_LNG, Place.Field.ADDRESS))
+            // Set location bias to current location if available
+            currentLocation?.let { location ->
+                setLocationBias(com.google.android.libraries.places.api.model.CircularBounds.newInstance(location, 50000.0)) // 50km radius
+            }
             setOnPlaceSelectedListener(object : com.google.android.libraries.places.widget.listener.PlaceSelectionListener {
                 override fun onPlaceSelected(place: Place) {
                     originPlace = place
@@ -512,6 +514,10 @@ class MainActivity : AppCompatActivity() {
 
         destinationPlacePicker?.apply {
             setPlaceFields(listOf(Place.Field.ID, Place.Field.NAME, Place.Field.LAT_LNG, Place.Field.ADDRESS))
+            // Set location bias to current location if available
+            currentLocation?.let { location ->
+                setLocationBias(com.google.android.libraries.places.api.model.CircularBounds.newInstance(location, 50000.0)) // 50km radius
+            }
             setOnPlaceSelectedListener(object : com.google.android.libraries.places.widget.listener.PlaceSelectionListener {
                 override fun onPlaceSelected(place: Place) {
                     destinationPlace = place
@@ -853,6 +859,18 @@ class MainActivity : AppCompatActivity() {
         val navigator = mNavigator ?: return
         
         try {
+            // Get new polyline from navigator
+            val segments = navigator.routeSegments
+            AppLogger.i("Reroute: obtained ${segments.size} route segments from navigator")
+
+            val points = segments
+              .flatMap { it.latLngs }
+              .map { LatLng(it.latitude, it.longitude) }
+
+            val encodedPolyline = PolylineEncoder.encode(points, precision = 5)
+            AppLogger.i("Reroute: encoded polyline length=${encodedPolyline.length}")
+            currentRoutePolyline = encodedPolyline
+
             // The navigator automatically updates its route
             // We need to reset our distance tracking for the new route
             currentLocationMeters = 0.0
@@ -1998,12 +2016,44 @@ class MainActivity : AppCompatActivity() {
             val remainingMeters = charger.distanceAlongRoute - currentLocationMeters
             val remainingMiles = remainingMeters / 1609.344
             val displayDistance = remainingMiles.coerceAtLeast(0.0)
-            binding.chargerDistance.text = String.format(Locale.getDefault(), "%.1f mi", displayDistance)
+            
+            // Format distance: 1 decimal place if <10 miles, otherwise round
+            binding.chargerDistance.text = if (displayDistance < 10.0) {
+                String.format(Locale.getDefault(), "%.1f mi", displayDistance)
+            } else {
+                "${displayDistance.toInt()} mi"
+            }
+            
+            // Apply color scheme based on CCS point count
+            applyChargerColorScheme(binding, charger.ccsPoints)
             
             // Debug logging
             AppLogger.d("Charger[$index] ${charger.title}: distAlongRoute=${charger.distanceAlongRoute}m, currentPos=${currentLocationMeters}m, remaining=${remainingMiles.toInt()}mi")
         } else {
             binding.root.visibility = View.GONE
+        }
+    }
+    
+    private fun applyChargerColorScheme(
+        binding: com.rw251.pleasecharge.databinding.ChargerItemBinding,
+        ccsPoints: Int
+    ) {
+        when (ccsPoints) {
+            1 -> {
+                // Single charger: Amber CCS box
+                binding.chargerCCSBox.setBackgroundResource(R.drawable.ccs_box_single)
+                binding.chargerCCS.setTextColor(0xFFFFFFFF.toInt()) // White text on amber
+            }
+            in 2..8 -> {
+                // Medium chargers (2-8): Green CCS box
+                binding.chargerCCSBox.setBackgroundResource(R.drawable.ccs_box_medium)
+                binding.chargerCCS.setTextColor(0xFFFFFFFF.toInt()) // White text on green
+            }
+            else -> {
+                // Large chargers (>6): Purple CCS box
+                binding.chargerCCSBox.setBackgroundResource(R.drawable.ccs_box_large)
+                binding.chargerCCS.setTextColor(0xFFFFFFFF.toInt()) // White text on purple
+            }
         }
     }
     
