@@ -29,7 +29,7 @@
             android:id="@+id/topBleStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Scanning for OBD device..."
+            android:text="@string/scanning_for_obd_device"
             android:textSize="16sp"
             android:textStyle="bold"
             android:textColor="#FFFFFF"
@@ -41,7 +41,7 @@
             android:id="@+id/topTimeoutCountdown"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Service timeout: --"
+            android:text="@string/service_timeout"
             android:textSize="12sp"
             android:textColor="#FFFFFF"
             android:gravity="center"
@@ -62,7 +62,7 @@
         android:layout_weight="1">
 
         <!-- Full-screen Map View -->
-        <fragment xmlns:android="http://schemas.android.com/apk/res/android"
+        <androidx.fragment.app.FragmentContainerView
           android:name="com.google.android.libraries.navigation.SupportNavigationFragment"
           android:id="@+id/navigation_fragment"
           android:layout_width="match_parent"
@@ -95,12 +95,12 @@
               <TextView
                   android:layout_width="wrap_content"
                   android:layout_height="wrap_content"
-                  android:text="Starting Location"
+                  android:text="@string/starting_location"
                   android:textSize="12sp"
                   android:textColor="#666666"
                   android:layout_marginBottom="4dp" />
 
-              <fragment
+              <androidx.fragment.app.FragmentContainerView
                   android:name="com.google.android.libraries.places.widget.AutocompleteSupportFragment"
                   android:id="@+id/originPlacePickerFragment"
                   android:layout_width="match_parent"
@@ -117,12 +117,12 @@
               <TextView
                   android:layout_width="wrap_content"
                   android:layout_height="wrap_content"
-                  android:text="Destination"
+                  android:text="@string/destination"
                   android:textSize="12sp"
                   android:textColor="#666666"
                   android:layout_marginBottom="4dp" />
 
-              <fragment
+              <androidx.fragment.app.FragmentContainerView
                   android:name="com.google.android.libraries.places.widget.AutocompleteSupportFragment"
                   android:id="@+id/destinationPlacePickerFragment"
                   android:layout_width="match_parent"
@@ -141,7 +141,7 @@
               <TextView
                   android:layout_width="wrap_content"
                   android:layout_height="wrap_content"
-                  android:text="Charger Settings"
+                  android:text="@string/charger_settings"
                   android:textSize="14sp"
                   android:textStyle="bold"
                   android:textColor="#333333"
@@ -151,6 +151,7 @@
               <LinearLayout
                   android:layout_width="match_parent"
                   android:layout_height="wrap_content"
+                  android:baselineAligned="false"
                   android:orientation="horizontal"
                   android:layout_marginBottom="8dp">
 
@@ -164,7 +165,8 @@
                       <TextView
                           android:layout_width="wrap_content"
                           android:layout_height="wrap_content"
-                          android:text="Min Distance (mi)"
+                          android:text="@string/min_distance_mi"
+                          android:labelFor="@+id/chargerMinDistanceInput"
                           android:textSize="12sp"
                           android:textColor="#666666" />
 
@@ -172,8 +174,9 @@
                           android:id="@+id/chargerMinDistanceInput"
                           android:layout_width="match_parent"
                           android:layout_height="wrap_content"
+                          android:importantForAutofill="no"
                           android:inputType="number"
-                          android:text="0"
+                          android:text="@string/_0"
                           android:textSize="14sp"
                           android:padding="8dp"
                           android:background="@android:drawable/edit_text" />
@@ -188,7 +191,7 @@
                       <TextView
                           android:layout_width="wrap_content"
                           android:layout_height="wrap_content"
-                          android:text="Max Distance (mi)"
+                          android:text="@string/max_distance_mi"
                           android:textSize="12sp"
                           android:textColor="#666666" />
 
@@ -196,8 +199,9 @@
                           android:id="@+id/chargerMaxDistanceInput"
                           android:layout_width="match_parent"
                           android:layout_height="wrap_content"
+                          android:importantForAutofill="no"
                           android:inputType="number"
-                          android:text="300"
+                          android:text="@string/_300"
                           android:textSize="14sp"
                           android:padding="8dp"
                           android:background="@android:drawable/edit_text" />
@@ -209,14 +213,14 @@
                   android:id="@+id/cancelButton"
                   android:layout_width="match_parent"
                   android:layout_height="wrap_content"
-                  android:text="Cancel" />
+                  android:text="@string/cancel" />
 
               <!-- Refetch Button -->
               <Button
                   android:id="@+id/refetchChargersButton"
                   android:layout_width="match_parent"
                   android:layout_height="wrap_content"
-                  android:text="Fetch More Chargers"
+                  android:text="@string/fetch_more_chargers"
                   android:visibility="gone" />
           </LinearLayout>
 
@@ -245,7 +249,7 @@
                   android:id="@+id/routeStatusText"
                   android:layout_width="wrap_content"
                   android:layout_height="wrap_content"
-                  android:text="Getting route..."
+                  android:text="@string/getting_route"
                   android:textSize="16sp"
                   android:textStyle="bold"
                   android:textColor="#2196F3" />
@@ -256,16 +260,11 @@
               android:id="@+id/routeInfoPanel"
               android:layout_width="match_parent"
               android:layout_height="wrap_content"
-              android:orientation="vertical"
+              android:orientation="horizontal"
+              android:gravity="center_vertical"
               android:background="@drawable/bottom_sheet_background"
               android:padding="12dp"
               android:visibility="gone">
-
-              <LinearLayout
-                  android:layout_width="match_parent"
-                  android:layout_height="wrap_content"
-                  android:orientation="horizontal"
-                  android:gravity="center_vertical">
 
                   <LinearLayout
                       android:layout_width="0dp"
@@ -276,7 +275,7 @@
                       <TextView
                           android:layout_width="wrap_content"
                           android:layout_height="wrap_content"
-                          android:text="Distance"
+                          android:text="@string/distance"
                           android:textSize="12sp"
                           android:textColor="#999999" />
 
@@ -284,7 +283,7 @@
                           android:id="@+id/routeDistance"
                           android:layout_width="wrap_content"
                           android:layout_height="wrap_content"
-                          android:text="--"
+                          android:text="@string/dashes"
                           android:textSize="16sp"
                           android:textStyle="bold" />
                   </LinearLayout>
@@ -298,7 +297,7 @@
                       <TextView
                           android:layout_width="wrap_content"
                           android:layout_height="wrap_content"
-                          android:text="Duration"
+                          android:text="@string/duration"
                           android:textSize="12sp"
                           android:textColor="#999999" />
 
@@ -306,7 +305,7 @@
                           android:id="@+id/routeDuration"
                           android:layout_width="wrap_content"
                           android:layout_height="wrap_content"
-                          android:text="--"
+                          android:text="@string/dashes"
                           android:textSize="16sp"
                           android:textStyle="bold" />
                   </LinearLayout>
@@ -315,18 +314,17 @@
                       android:id="@+id/startNavigationButton"
                       android:layout_width="wrap_content"
                       android:layout_height="wrap_content"
-                      android:text="Start"
+                      android:text="@string/start"
                       android:paddingHorizontal="24dp" />
 
                   <Button
                       android:id="@+id/fakeStartNavigationButton"
                       android:layout_width="wrap_content"
                       android:layout_height="wrap_content"
-                      android:text="Fake start"
+                      android:text="@string/fake_start"
                       android:paddingHorizontal="16dp"
                       android:visibility="gone"
                       android:layout_marginStart="8dp" />
-              </LinearLayout>
           </LinearLayout>
         </LinearLayout>
 
@@ -345,7 +343,7 @@
                 style="@style/Widget.Material3.Button"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Plan route"
+                android:text="@string/plan_route"
                 android:textAllCaps="false"
                 android:textColor="@android:color/white"
                 android:paddingHorizontal="18dp"
@@ -390,6 +388,7 @@
               <LinearLayout
                   android:layout_width="match_parent"
                   android:layout_height="wrap_content"
+                  android:baselineAligned="false"
                   android:orientation="horizontal"
                   android:gravity="center">
 
@@ -405,7 +404,7 @@
                           android:id="@+id/socValue"
                           android:layout_width="wrap_content"
                           android:layout_height="wrap_content"
-                          android:text="--"
+                          android:text="@string/dashes"
                           android:textSize="32sp"
                           android:textStyle="bold"
                           android:textColor="#4CAF50" />
@@ -413,7 +412,7 @@
                       <TextView
                           android:layout_width="wrap_content"
                           android:layout_height="wrap_content"
-                          android:text="SOC %"
+                          android:text="@string/soc"
                           android:textSize="12sp"
                           android:textColor="#666666" />
                   </LinearLayout>
@@ -430,7 +429,7 @@
                           android:id="@+id/tempValue"
                           android:layout_width="wrap_content"
                           android:layout_height="wrap_content"
-                          android:text="--"
+                          android:text="@string/dashes"
                           android:textSize="32sp"
                           android:textStyle="bold"
                           android:textColor="#FF9800" />
@@ -438,7 +437,7 @@
                       <TextView
                           android:layout_width="wrap_content"
                           android:layout_height="wrap_content"
-                          android:text="Temp °C"
+                          android:text="@string/temp_c"
                           android:textSize="12sp"
                           android:textColor="#666666" />
                   </LinearLayout>
@@ -455,7 +454,7 @@
                           android:id="@+id/speedValue"
                           android:layout_width="wrap_content"
                           android:layout_height="wrap_content"
-                          android:text="--"
+                          android:text="@string/dashes"
                           android:textSize="32sp"
                           android:textStyle="bold"
                           android:textColor="#2196F3" />
@@ -463,7 +462,7 @@
                       <TextView
                           android:layout_width="wrap_content"
                           android:layout_height="wrap_content"
-                          android:text="mph"
+                          android:text="@string/mph"
                           android:textSize="12sp"
                           android:textColor="#666666" />
                   </LinearLayout>
@@ -487,6 +486,7 @@
                   <LinearLayout
                       android:layout_width="match_parent"
                       android:layout_height="wrap_content"
+                      android:baselineAligned="false"
                       android:orientation="horizontal"
                       android:gravity="center"
                       android:layout_marginBottom="16dp">
@@ -503,7 +503,7 @@
                               android:id="@+id/distanceValue"
                               android:layout_width="wrap_content"
                               android:layout_height="wrap_content"
-                              android:text="0.0"
+                              android:text="@string/_0_0"
                               android:textSize="24sp"
                               android:textStyle="bold"
                               android:textColor="#9C27B0" />
@@ -511,7 +511,7 @@
                           <TextView
                               android:layout_width="wrap_content"
                               android:layout_height="wrap_content"
-                              android:text="Distance (mi)"
+                              android:text="@string/distance_mi"
                               android:textSize="12sp"
                               android:textColor="#666666" />
                       </LinearLayout>
@@ -528,7 +528,7 @@
                               android:id="@+id/durationValue"
                               android:layout_width="wrap_content"
                               android:layout_height="wrap_content"
-                              android:text="0:00:00"
+                              android:text="@string/_0_00_00"
                               android:textSize="24sp"
                               android:textStyle="bold"
                               android:textColor="#607D8B" />
@@ -536,7 +536,7 @@
                           <TextView
                               android:layout_width="wrap_content"
                               android:layout_height="wrap_content"
-                              android:text="Duration"
+                              android:text="@string/duration"
                               android:textSize="12sp"
                               android:textColor="#666666" />
                       </LinearLayout>
@@ -553,7 +553,7 @@
                               android:id="@+id/avgSpeedValue"
                               android:layout_width="wrap_content"
                               android:layout_height="wrap_content"
-                              android:text="--"
+                              android:text="@string/dashes"
                               android:textSize="24sp"
                               android:textStyle="bold"
                               android:textColor="#795548" />
@@ -561,7 +561,7 @@
                           <TextView
                               android:layout_width="wrap_content"
                               android:layout_height="wrap_content"
-                              android:text="Avg mph"
+                              android:text="@string/avg_mph"
                               android:textSize="12sp"
                               android:textColor="#666666" />
                       </LinearLayout>
@@ -592,7 +592,7 @@
                   android:layout_width="match_parent"
                   android:layout_height="wrap_content"
                   android:layout_marginBottom="8dp"
-                  android:text="View Logs"
+                  android:text="@string/view_logs"
                   android:textSize="16sp"
                   android:minHeight="48dp"
                   style="@style/Widget.Material3.Button.OutlinedButton" />
@@ -602,7 +602,7 @@
                   android:layout_width="match_parent"
                   android:layout_height="wrap_content"
                   android:layout_marginBottom="8dp"
-                  android:text="Export CSV"
+                  android:text="@string/export_csv"
                   android:textSize="16sp"
                   android:minHeight="48dp"
                   style="@style/Widget.Material3.Button.OutlinedButton" />
@@ -611,7 +611,7 @@
                   android:id="@+id/pauseResumeButton"
                   android:layout_width="match_parent"
                   android:layout_height="wrap_content"
-                  android:text="Pause app"
+                  android:text="@string/pause_app"
                   android:textSize="16sp"
                   android:minHeight="48dp"
                   style="@style/Widget.Material3.Button.OutlinedButton" />
@@ -635,261 +635,19 @@
               android:layout_marginBottom="0dp">
 
               <!-- Charger 1 -->
-              <LinearLayout
+              <include
                   android:id="@+id/charger1Container"
-                  android:layout_width="match_parent"
-                  android:layout_height="wrap_content"
-                  android:orientation="vertical"
-                  android:padding="8dp"
-                  android:background="@drawable/charger_item_background"
-                  android:layout_marginBottom="6dp">
-
-                  <LinearLayout
-                      android:layout_width="match_parent"
-                      android:layout_height="wrap_content"
-                      android:orientation="horizontal"
-                      android:gravity="center_vertical">
-
-                      <LinearLayout
-                          android:layout_width="0dp"
-                          android:layout_height="wrap_content"
-                          android:layout_weight="1"
-                          android:orientation="vertical">
-
-                          <TextView
-                              android:id="@+id/charger1Name"
-                              android:layout_width="wrap_content"
-                              android:layout_height="wrap_content"
-                              android:text="--"
-                              android:textSize="12sp"
-                              android:textStyle="bold"
-                              android:textColor="#212121"
-                              android:maxLines="1"
-                              android:ellipsize="end" />
-
-                          <LinearLayout
-                              android:layout_width="wrap_content"
-                              android:layout_height="wrap_content"
-                              android:orientation="horizontal"
-                              android:layout_marginTop="2dp">
-
-                              <TextView
-                                  android:layout_width="wrap_content"
-                                  android:layout_height="wrap_content"
-                                  android:text="CCS: "
-                                  android:textSize="11sp"
-                                  android:textColor="#666666" />
-
-                              <TextView
-                                  android:id="@+id/charger1CCS"
-                                  android:layout_width="wrap_content"
-                                  android:layout_height="wrap_content"
-                                  android:text="--"
-                                  android:textSize="11sp"
-                                  android:textStyle="bold"
-                                  android:textColor="#666666"
-                                  android:layout_marginEnd="12dp" />
-
-                              <TextView
-                                  android:layout_width="wrap_content"
-                                  android:layout_height="wrap_content"
-                                  android:text="Deviation: "
-                                  android:textSize="11sp"
-                                  android:textColor="#666666" />
-
-                              <TextView
-                                  android:id="@+id/charger1Deviation"
-                                  android:layout_width="wrap_content"
-                                  android:layout_height="wrap_content"
-                                  android:text="--"
-                                  android:textSize="11sp"
-                                  android:textStyle="bold"
-                                  android:textColor="#666666" />
-                          </LinearLayout>
-                      </LinearLayout>
-
-                      <TextView
-                          android:id="@+id/charger1Distance"
-                          android:layout_width="wrap_content"
-                          android:layout_height="wrap_content"
-                          android:text="--"
-                          android:textSize="13sp"
-                          android:textStyle="bold"
-                          android:textColor="#2196F3"
-                          android:layout_marginStart="8dp" />
-                  </LinearLayout>
-              </LinearLayout>
+                  layout="@layout/charger_item" />
 
               <!-- Charger 2 -->
-              <LinearLayout
+              <include
                   android:id="@+id/charger2Container"
-                  android:layout_width="match_parent"
-                  android:layout_height="wrap_content"
-                  android:orientation="vertical"
-                  android:padding="8dp"
-                  android:background="@drawable/charger_item_background"
-                  android:layout_marginBottom="6dp">
-
-                  <LinearLayout
-                      android:layout_width="match_parent"
-                      android:layout_height="wrap_content"
-                      android:orientation="horizontal"
-                      android:gravity="center_vertical">
-
-                      <LinearLayout
-                          android:layout_width="0dp"
-                          android:layout_height="wrap_content"
-                          android:layout_weight="1"
-                          android:orientation="vertical">
-
-                          <TextView
-                              android:id="@+id/charger2Name"
-                              android:layout_width="wrap_content"
-                              android:layout_height="wrap_content"
-                              android:text="--"
-                              android:textSize="12sp"
-                              android:textStyle="bold"
-                              android:textColor="#212121"
-                              android:maxLines="1"
-                              android:ellipsize="end" />
-
-                          <LinearLayout
-                              android:layout_width="wrap_content"
-                              android:layout_height="wrap_content"
-                              android:orientation="horizontal"
-                              android:layout_marginTop="2dp">
-
-                              <TextView
-                                  android:layout_width="wrap_content"
-                                  android:layout_height="wrap_content"
-                                  android:text="CCS: "
-                                  android:textSize="11sp"
-                                  android:textColor="#666666" />
-
-                              <TextView
-                                  android:id="@+id/charger2CCS"
-                                  android:layout_width="wrap_content"
-                                  android:layout_height="wrap_content"
-                                  android:text="--"
-                                  android:textSize="11sp"
-                                  android:textStyle="bold"
-                                  android:textColor="#666666"
-                                  android:layout_marginEnd="12dp" />
-
-                              <TextView
-                                  android:layout_width="wrap_content"
-                                  android:layout_height="wrap_content"
-                                  android:text="Deviation: "
-                                  android:textSize="11sp"
-                                  android:textColor="#666666" />
-
-                              <TextView
-                                  android:id="@+id/charger2Deviation"
-                                  android:layout_width="wrap_content"
-                                  android:layout_height="wrap_content"
-                                  android:text="--"
-                                  android:textSize="11sp"
-                                  android:textStyle="bold"
-                                  android:textColor="#666666" />
-                          </LinearLayout>
-                      </LinearLayout>
-
-                      <TextView
-                          android:id="@+id/charger2Distance"
-                          android:layout_width="wrap_content"
-                          android:layout_height="wrap_content"
-                          android:text="--"
-                          android:textSize="13sp"
-                          android:textStyle="bold"
-                          android:textColor="#2196F3"
-                          android:layout_marginStart="8dp" />
-                  </LinearLayout>
-              </LinearLayout>
+                  layout="@layout/charger_item" />
 
               <!-- Charger 3 -->
-              <LinearLayout
+              <include
                   android:id="@+id/charger3Container"
-                  android:layout_width="match_parent"
-                  android:layout_height="wrap_content"
-                  android:orientation="vertical"
-                  android:padding="8dp"
-                  android:background="@drawable/charger_item_background">
-
-                  <LinearLayout
-                      android:layout_width="match_parent"
-                      android:layout_height="wrap_content"
-                      android:orientation="horizontal"
-                      android:gravity="center_vertical">
-
-                      <LinearLayout
-                          android:layout_width="0dp"
-                          android:layout_height="wrap_content"
-                          android:layout_weight="1"
-                          android:orientation="vertical">
-
-                          <TextView
-                              android:id="@+id/charger3Name"
-                              android:layout_width="wrap_content"
-                              android:layout_height="wrap_content"
-                              android:text="--"
-                              android:textSize="12sp"
-                              android:textStyle="bold"
-                              android:textColor="#212121"
-                              android:maxLines="1"
-                              android:ellipsize="end" />
-
-                          <LinearLayout
-                              android:layout_width="wrap_content"
-                              android:layout_height="wrap_content"
-                              android:orientation="horizontal"
-                              android:layout_marginTop="2dp">
-
-                              <TextView
-                                  android:layout_width="wrap_content"
-                                  android:layout_height="wrap_content"
-                                  android:text="CCS: "
-                                  android:textSize="11sp"
-                                  android:textColor="#666666" />
-
-                              <TextView
-                                  android:id="@+id/charger3CCS"
-                                  android:layout_width="wrap_content"
-                                  android:layout_height="wrap_content"
-                                  android:text="--"
-                                  android:textSize="11sp"
-                                  android:textStyle="bold"
-                                  android:textColor="#666666"
-                                  android:layout_marginEnd="12dp" />
-
-                              <TextView
-                                  android:layout_width="wrap_content"
-                                  android:layout_height="wrap_content"
-                                  android:text="Deviation: "
-                                  android:textSize="11sp"
-                                  android:textColor="#666666" />
-
-                              <TextView
-                                  android:id="@+id/charger3Deviation"
-                                  android:layout_width="wrap_content"
-                                  android:layout_height="wrap_content"
-                                  android:text="--"
-                                  android:textSize="11sp"
-                                  android:textStyle="bold"
-                                  android:textColor="#666666" />
-                          </LinearLayout>
-                      </LinearLayout>
-
-                      <TextView
-                          android:id="@+id/charger3Distance"
-                          android:layout_width="wrap_content"
-                          android:layout_height="wrap_content"
-                          android:text="--"
-                          android:textSize="13sp"
-                          android:textStyle="bold"
-                          android:textColor="#2196F3"
-                          android:layout_marginStart="8dp" />
-                  </LinearLayout>
-              </LinearLayout>
+                  layout="@layout/charger_item" />
             </LinearLayout>
       </FrameLayout>
 </LinearLayout>

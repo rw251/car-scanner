@@ -130,7 +130,6 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var mRoadSnappedLocationProvider: RoadSnappedLocationProvider
     private lateinit var mLocationListener: RoadSnappedLocationProvider.LocationListener
-    private var lastChargerUpdateTimeMs: Long = 0
     private var lastDistanceCalcTimeMs: Long = 0
     private var lastDistanceMeters: Double = 0.0
 
@@ -1593,9 +1592,10 @@ class MainActivity : AppCompatActivity() {
         binding.routeToggleButton.text = getString(R.string.plan_route)
     }
 
+    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     private fun pauseApp() {
         appPaused = true
-        binding.pauseResumeButton.text = "Resume app"
+        binding.pauseResumeButton.text = getString(R.string.resume_app)
         AppLogger.i("Pausing app: stopping foreground service, BLE, and location listener")
         // Stop BLE manager in activity
         try { manager?.stop() } catch (_: Exception) {}
@@ -1608,9 +1608,10 @@ class MainActivity : AppCompatActivity() {
         try { if(::mRoadSnappedLocationProvider.isInitialized) mRoadSnappedLocationProvider.removeLocationListener(mLocationListener) } catch (_: Exception) {}
     }
 
+    @RequiresPermission(allOf = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT])
     private fun resumeApp() {
         appPaused = false
-        binding.pauseResumeButton.text = "Pause app"
+        binding.pauseResumeButton.text = getString(R.string.pause_app)
         AppLogger.i("Resuming app: starting foreground service and re-registering listeners")
         // Restart foreground service
         val intent = Intent(this, BleForegroundService::class.java).apply { action = BleForegroundService.ACTION_START }
@@ -1622,9 +1623,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupChargerSelectionHandlers() {
-        binding.charger1Container.setOnClickListener { handleChargerSelected(0) }
-        binding.charger2Container.setOnClickListener { handleChargerSelected(1) }
-        binding.charger3Container.setOnClickListener { handleChargerSelected(2) }
+        binding.charger1Container.root.setOnClickListener { handleChargerSelected(0) }
+        binding.charger2Container.root.setOnClickListener { handleChargerSelected(1) }
+        binding.charger3Container.root.setOnClickListener { handleChargerSelected(2) }
     }
 
     private fun handleChargerSelected(index: Int) {
@@ -1633,7 +1634,7 @@ class MainActivity : AppCompatActivity() {
             AppLogger.i("Charger selected: ${charger.title} (${charger.latitude},${charger.longitude})")
             plotRouteViaCharger(charger)
         } else {
-            AppLogger.w("Charger index ${index} is out of range for currentDisplayedChargers=${currentDisplayedChargers.size}")
+            AppLogger.w("Charger index $index is out of range for currentDisplayedChargers=${currentDisplayedChargers.size}")
         }
     }
 
@@ -1868,41 +1869,37 @@ class MainActivity : AppCompatActivity() {
         }
         
         // Update UI for each charger slot
-        updateChargerSlot(0, nextChargers, binding.charger1Container, binding.charger1Name, binding.charger1CCS, binding.charger1Deviation, binding.charger1Distance)
-        updateChargerSlot(1, nextChargers, binding.charger2Container, binding.charger2Name, binding.charger2CCS, binding.charger2Deviation, binding.charger2Distance)
-        updateChargerSlot(2, nextChargers, binding.charger3Container, binding.charger3Name, binding.charger3CCS, binding.charger3Deviation, binding.charger3Distance)
+        updateChargerSlot(0, nextChargers, binding.charger1Container)
+        updateChargerSlot(1, nextChargers, binding.charger2Container)
+        updateChargerSlot(2, nextChargers, binding.charger3Container)
     }
     
     @SuppressLint("SetTextI18n")
     private fun updateChargerSlot(
         index: Int,
         chargers: List<ChargingPoint>,
-        container: LinearLayout,
-        nameText: TextView,
-        ccsText: TextView,
-        deviationText: TextView,
-        distanceText: TextView
+        binding: com.rw251.pleasecharge.databinding.ChargerItemBinding
     ) {
         if (index < chargers.size) {
             val charger = chargers[index]
-            container.visibility = View.VISIBLE
+            binding.root.visibility = View.VISIBLE
             
-            nameText.text = charger.title ?: "Unknown"
-            ccsText.text = charger.ccsPoints.toString()
+            binding.chargerName.text = charger.title ?: "Unknown"
+            binding.chargerCCS.text = charger.ccsPoints.toString()
             
             val deviationMinutes = (charger.deviationSeconds ?: 0) / 60
-            deviationText.text = if (deviationMinutes > 0) "+${deviationMinutes}m" else "${deviationMinutes}m"
+            binding.chargerDeviation.text = if (deviationMinutes > 0) "+${deviationMinutes}m" else "${deviationMinutes}m"
             
             // Distance remaining to this charger
             val remainingMeters = charger.distanceAlongRoute - currentLocationMeters
             val remainingMiles = remainingMeters / 1609.344
             val displayDistance = remainingMiles.coerceAtLeast(0.0)
-            distanceText.text = String.format(Locale.getDefault(), "%.1f mi", displayDistance)
+            binding.chargerDistance.text = String.format(Locale.getDefault(), "%.1f mi", displayDistance)
             
             // Debug logging
             AppLogger.d("Charger[$index] ${charger.title}: distAlongRoute=${charger.distanceAlongRoute}m, currentPos=${currentLocationMeters}m, remaining=${remainingMiles.toInt()}mi")
         } else {
-            container.visibility = View.GONE
+            binding.root.visibility = View.GONE
         }
     }
     
