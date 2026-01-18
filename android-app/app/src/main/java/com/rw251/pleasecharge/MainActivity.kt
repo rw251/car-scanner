@@ -2,8 +2,10 @@ package com.rw251.pleasecharge
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
+import android.location.LocationManager
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
@@ -134,6 +136,11 @@ class MainActivity : AppCompatActivity() {
     // Navigation event listeners
     private var routeChangedListener: Navigator.RouteChangedListener? = null
     private var arrivalListener: Navigator.ArrivalListener? = null
+    private var remainingTimeOrDistanceListener: Navigator.RemainingTimeOrDistanceChangedListener? = null
+    
+    // Flag to track if we're simulating from a custom origin (not current GPS location)
+    // When true, reroute events are ignored since we want to follow the pre-calculated route
+    private var isSimulatingFromCustomOrigin: Boolean = false
 
     // Make navigator and routing options nullable as they're initialized later
     var mNavigator: Navigator? = null
@@ -493,6 +500,11 @@ class MainActivity : AppCompatActivity() {
         originPlacePicker = supportFragmentManager.findFragmentById(R.id.originPlacePickerFragment) as? AutocompleteSupportFragment
         destinationPlacePicker = supportFragmentManager.findFragmentById(R.id.destinationPlacePickerFragment) as? AutocompleteSupportFragment
 
+        // Only show origin picker in debug builds
+        if (!BuildConfig.DEBUG) {
+            binding.originPlacePickerContainer.visibility = View.GONE
+        }
+        
         originPlacePicker?.apply {
             setPlaceFields(listOf(Place.Field.ID, Place.Field.NAME, Place.Field.LAT_LNG, Place.Field.ADDRESS))
             // Set location bias to current location if available
@@ -502,7 +514,8 @@ class MainActivity : AppCompatActivity() {
             setOnPlaceSelectedListener(object : com.google.android.libraries.places.widget.listener.PlaceSelectionListener {
                 override fun onPlaceSelected(place: Place) {
                     originPlace = place
-                    AppLogger.i("Origin selected: ${place.displayName}")
+                    originLatLng = place.location
+                    AppLogger.i("Origin selected: ${place.displayName} at ${place.location}")
                     updateRoute()
                 }
 
@@ -625,7 +638,9 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.routeInfoPanel.visibility = View.VISIBLE
-        binding.startNavigationButton.setOnClickListener {
+        binding.startNavigationButton.setOnClickListener @androidx.annotation.RequiresPermission(
+            allOf = [android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION]
+        ) {
             startNavigation(destination, simulate = false)
         }
         // Show fake start only in debug builds
@@ -650,6 +665,7 @@ class MainActivity : AppCompatActivity() {
         return r * c
     }
 
+    @RequiresPermission(allOf = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION])
     private fun startNavigation(destination: LatLng, simulate: Boolean) {
         AppLogger.i("startNavigation: destination=${destination.latitude},${destination.longitude}, simulate=$simulate")
         navigateToPlace(destination, simulate)
@@ -684,12 +700,16 @@ class MainActivity : AppCompatActivity() {
         try {
             // Stop any running simulation (used in debug builds to fake movement)
             mNavigator?.simulator?.unsetUserLocation()
+            
+            // Reset custom origin simulation flag
+            isSimulatingFromCustomOrigin = false
 
             mNavigator?.stopGuidance()
             
             // Unregister navigation event listeners
             routeChangedListener?.let { mNavigator?.removeRouteChangedListener(it) }
             arrivalListener?.let { mNavigator?.removeArrivalListener(it) }
+            remainingTimeOrDistanceListener?.let { mNavigator?.removeRemainingTimeOrDistanceChangedListener(it) }
             
             // Clear the route from the map
             mNavigator?.clearDestinations()
@@ -713,8 +733,17 @@ class MainActivity : AppCompatActivity() {
         // binding.chargerListOverlay.visibility = View.GONE
         binding.refetchChargersButton.visibility = View.GONE
         setNavigationActive(false)
+
+        // Resume real location updates now navigation/simulation has stopped
+        try {
+            startLocationTracking()
+            AppLogger.i("stopNavigation: Resumed real location tracking after simulation stopped")
+        } catch (e: Exception) {
+            AppLogger.w("stopNavigation: Failed to resume location tracking: ${e.message}")
+        }
     }
 
+    @RequiresPermission(allOf = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION])
     fun navigateToPlace(destination: LatLng, simulate: Boolean) {
         AppLogger.i("navigateToPlace called for ${destination.latitude},${destination.longitude}")
         val navigator = mNavigator
@@ -748,6 +777,84 @@ class MainActivity : AppCompatActivity() {
             .setRouteToken(routeToken)
             .setTravelMode(CustomRoutesOptions.TravelMode.DRIVING)
             .build()
+
+        // Check if simulating with a custom origin (different from current GPS location)
+        val usingCustomOrigin = simulate && originLatLng != null && routeOrigin != null && 
+            (currentLocation == null || haversineDistance(
+                originLatLng!!.latitude, originLatLng!!.longitude,
+                currentLocation!!.latitude, currentLocation!!.longitude
+            ) > 1.0) // More than 1km away = custom origin
+        
+        // Track if we're simulating from a custom origin - if so, we'll ignore reroute events
+        isSimulatingFromCustomOrigin = usingCustomOrigin
+        if (isSimulatingFromCustomOrigin) {
+            AppLogger.i("navigateToPlace: Custom origin simulation mode - will use simulateLocationsAlongNewRoute")
+        }
+        
+        // For custom origin simulation, use simulateLocationsAlongNewRoute with origin+destination waypoints
+        // This bypasses the Navigator's GPS-based route calculation
+        if (usingCustomOrigin) {
+            val originWaypoint: Waypoint
+            try {
+                originWaypoint = Waypoint.builder()
+                    .setTitle("Origin")
+                    .setLatLng(routeOrigin!!.latitude, routeOrigin!!.longitude)
+                    .build()
+                AppLogger.i("navigateToPlace: Created origin waypoint at $routeOrigin")
+            } catch (e: Waypoint.UnsupportedPlaceIdException) {
+                displayMessage("Error creating origin waypoint: ${e.message}")
+                return
+            }
+            
+            AppLogger.i("navigateToPlace: Starting simulation from custom origin ${routeOrigin} to ${destination}")
+            
+            // Pause real device location updates so the SDK only sees the simulator
+            stopLocationTracking()
+            AppLogger.i("navigateToPlace: Real location updates paused before starting simulation")
+
+
+            logSystemLocationSnapshot()
+            // CRITICAL: Set simulated user location to origin BEFORE starting simulation
+            // This makes the Navigator think we're already at the origin, so simulation starts there
+            navigator.simulator.setUserLocation(routeOrigin!!)
+            AppLogger.i("navigateToPlace: Set simulated user location to origin: ${routeOrigin}")
+            
+            // Register navigation listeners before starting simulation
+            registerNavigationListeners()
+            
+            val simulationFuture = navigator.simulator.simulateLocationsAlongNewRoute(
+                listOf(originWaypoint, waypoint),
+                mRoutingOptions,
+                SimulationOptions().speedMultiplier(5f)
+            )
+            
+            simulationFuture.setOnResultListener { code ->
+                when (code) {
+                    Navigator.RouteStatus.OK -> {
+                        logSystemLocationSnapshot()
+                        AppLogger.i("navigateToPlace: simulateLocationsAlongNewRoute RouteStatus.OK")
+                        displayMessage("Simulation started from custom origin.")
+                        
+                        // Start guidance
+                        navigator.startGuidance()
+                        
+                        // Register route change and arrival listeners
+                        registerRouteAndArrivalListeners()
+                        
+                        setNavigationActive(true)
+                        AppLogger.i("Custom origin navigation simulation started")
+                    }
+                    else -> {
+                        AppLogger.e("navigateToPlace: simulateLocationsAlongNewRoute failed: $code")
+                        displayMessage("Failed to start simulation: $code")
+                        isSimulatingFromCustomOrigin = false
+                    }
+                }
+            }
+            return
+        }
+
+        // Standard navigation (from current location or non-simulated)
 
         // Set the destination and start navigation
         val pendingRoute = navigator.setDestinations(listOf(waypoint), customRoutesOptions)
@@ -798,6 +905,15 @@ class MainActivity : AppCompatActivity() {
 
 
     fun registerNavigationListeners() {
+        // For custom origin simulation, use RemainingTimeOrDistanceChangedListener instead of RoadSnappedLocationProvider
+        // RoadSnappedLocationProvider provides REAL GPS which overrides our simulated position
+        // RemainingTimeOrDistanceChangedListener fires as simulation progresses
+        if (isSimulatingFromCustomOrigin) {
+            AppLogger.i("registerNavigationListeners: Using simulation-based position tracking (not GPS)")
+            registerSimulatedLocationListener()
+            return
+        }
+        
         mRoadSnappedLocationProvider = NavigationApi.getRoadSnappedLocationProvider(application)!!
 
         // Create and register location listener
@@ -829,12 +945,63 @@ class MainActivity : AppCompatActivity() {
         }
         mRoadSnappedLocationProvider.addLocationListener(mLocationListener)
     }
+    
+    private fun registerSimulatedLocationListener() {
+        val navigator = mNavigator ?: return
+        
+        // Use RemainingTimeOrDistanceChangedListener to track progress during simulation
+        // This fires as distance/time changes, and we get position from getCurrentRouteSegment()
+        remainingTimeOrDistanceListener = Navigator.RemainingTimeOrDistanceChangedListener {
+            // Get current simulated position from Navigator's route segment
+            val currentSegment = navigator.currentRouteSegment
+            if (currentSegment != null) {
+                val latLngs = currentSegment.latLngs
+                if (latLngs.isNotEmpty()) {
+                    // First point is the current (simulated) position
+                    val simLocation = latLngs[0]
+                    AppLogger.i("Simulated location update: lat=${simLocation.latitude}, lon=${simLocation.longitude}")
+                    
+                    if (navigationActive && allChargingPoints.isNotEmpty() && decodedRoutePath.isNotEmpty()) {
+                        val now = System.currentTimeMillis()
+                        // Debounce: only compute distance along route once per second
+                        if (now - lastDistanceCalcTimeMs >= 1000) {
+                            AppLogger.i("Time since last distance calc: ${now - lastDistanceCalcTimeMs}ms")
+                            lastDistanceCalcTimeMs = now
+                            val newMeters = calculateDistanceAlongRoute(simLocation.latitude, simLocation.longitude)
+                            val delta = newMeters - lastDistanceMeters
+                            lastDistanceMeters = newMeters
+                            currentLocationMeters = newMeters
+
+                            // Update chargers if moved >100 meters
+                            if (delta >= 100.0) {
+                                AppLogger.i("Movement >100m (${delta}m); updating charger list")
+                                updateChargerListDisplay()
+                                highlightNearbyChargers()
+                            } else {
+                                AppLogger.d("Movement <100m (${delta}m); skipping charger update")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Fire listener when distance changes by 100m or time by 5 seconds
+        navigator.addRemainingTimeOrDistanceChangedListener(5, 100, remainingTimeOrDistanceListener!!)
+        AppLogger.i("Registered RemainingTimeOrDistanceChangedListener for simulation tracking")
+    }
 
     private fun registerRouteAndArrivalListeners() {
         val navigator = mNavigator ?: return
         
         // Register route changed listener for reroutes
         routeChangedListener = Navigator.RouteChangedListener {
+            // Ignore reroute events when simulating from a custom origin
+            // The Navigator detects we're "off route" (real GPS vs simulated start) and tries to reroute
+            if (isSimulatingFromCustomOrigin) {
+                AppLogger.i("Route changed event received - IGNORED (custom origin simulation mode)")
+                return@RouteChangedListener
+            }
+            
             AppLogger.i("Route changed event received - performing reroute handling")
             lifecycleScope.launch {
                 try {
@@ -1727,6 +1894,9 @@ class MainActivity : AppCompatActivity() {
         // Remove location listener
         try { if(::mRoadSnappedLocationProvider.isInitialized) mRoadSnappedLocationProvider.removeLocationListener(mLocationListener) } catch (_: Exception) {}
         
+        // Remove simulation tracking listener
+        try { remainingTimeOrDistanceListener?.let { mNavigator?.removeRemainingTimeOrDistanceChangedListener(it) } } catch (_: Exception) {}
+        
         AppLogger.i("App paused - all services stopped")
     }
 
@@ -1979,6 +2149,7 @@ class MainActivity : AppCompatActivity() {
         // Find the next 3 chargers after current position
         val nextChargers = allChargingPoints
             .filter { it.distanceAlongRoute >= currentLocationMeters }
+            .filter { it.deviationSeconds != null && it.deviationSeconds!! < 12*60 }
             .take(3)
         currentDisplayedChargers = nextChargers
         
@@ -2007,10 +2178,11 @@ class MainActivity : AppCompatActivity() {
             binding.root.visibility = View.VISIBLE
             
             binding.chargerName.text = charger.title ?: "Unknown"
+            binding.chargerOperator.text = charger.operator ?: "Unknown"
             binding.chargerCCS.text = charger.ccsPoints.toString()
             
             val deviationMinutes = (charger.deviationSeconds ?: 0) / 60
-            binding.chargerDeviation.text = if (deviationMinutes > 0) "+${deviationMinutes}m" else "${deviationMinutes}m"
+            binding.chargerDeviation.text = if (deviationMinutes > 0) "(+${deviationMinutes}m)" else "(${deviationMinutes}m)"
             
             // Distance remaining to this charger
             val remainingMeters = charger.distanceAlongRoute - currentLocationMeters
@@ -2038,23 +2210,23 @@ class MainActivity : AppCompatActivity() {
         binding: com.rw251.pleasecharge.databinding.ChargerItemBinding,
         ccsPoints: Int
     ) {
-        when (ccsPoints) {
-            1 -> {
-                // Single charger: Amber CCS box
-                binding.chargerCCSBox.setBackgroundResource(R.drawable.ccs_box_single)
-                binding.chargerCCS.setTextColor(0xFFFFFFFF.toInt()) // White text on amber
-            }
-            in 2..8 -> {
-                // Medium chargers (2-8): Green CCS box
-                binding.chargerCCSBox.setBackgroundResource(R.drawable.ccs_box_medium)
-                binding.chargerCCS.setTextColor(0xFFFFFFFF.toInt()) // White text on green
-            }
-            else -> {
-                // Large chargers (>6): Purple CCS box
-                binding.chargerCCSBox.setBackgroundResource(R.drawable.ccs_box_large)
-                binding.chargerCCS.setTextColor(0xFFFFFFFF.toInt()) // White text on purple
-            }
-        }
+//        when (ccsPoints) {
+//            1 -> {
+//                // Single charger: Amber CCS box
+//                binding.chargerCCSBox.setBackgroundResource(R.drawable.ccs_box_single)
+//                binding.chargerCCS.setTextColor(0xFFFFFFFF.toInt()) // White text on amber
+//            }
+//            in 2..8 -> {
+//                // Medium chargers (2-8): Green CCS box
+//                binding.chargerCCSBox.setBackgroundResource(R.drawable.ccs_box_medium)
+//                binding.chargerCCS.setTextColor(0xFFFFFFFF.toInt()) // White text on green
+//            }
+//            else -> {
+//                // Large chargers (>6): Purple CCS box
+//                binding.chargerCCSBox.setBackgroundResource(R.drawable.ccs_box_large)
+//                binding.chargerCCS.setTextColor(0xFFFFFFFF.toInt()) // White text on purple
+//            }
+//        }
     }
     
     @SuppressLint("SetTextI18n")
@@ -2088,6 +2260,25 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
+    // Call this right BEFORE you call navigator.simulator.setUserLocation(...)
+    @RequiresPermission(allOf = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION])
+    private fun logSystemLocationSnapshot(tag: String = "PleaseCharge") {
+      try {
+        val lm = getSystemService(LOCATION_SERVICE) as LocationManager
+        val gps = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+        val net = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+        val pass = lm.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER)
+        AppLogger.i("$tag: SYSTEM SNAPSHOT - GPS=${locToStr(gps)}, NETWORK=${locToStr(net)}, PASSIVE=${locToStr(pass)}")
+      } catch (e: Exception) {
+        AppLogger.w("logSystemLocationSnapshot error: ${e.message}")
+      }
+    }
+
+    private fun locToStr(l: android.location.Location?): String {
+      return if (l == null) "null" else "lat=${l.latitude},lon=${l.longitude},time=${l.time},provider=${l.provider}"
+    }
+
     
     private fun stopDurationTimer() {
         durationJob?.cancel()
@@ -2103,12 +2294,21 @@ class MainActivity : AppCompatActivity() {
                     viewModel.setLocationStats(it.totalTripDistanceMiles, it.averageSpeedMph)
                     // Update current location and default origin
                     currentLocation = LatLng(it.lat, it.lon)
-                    // Only set default origin once to avoid re-planning loop while moving
-                    if (originPlace == null && originLatLng == null && !navigationActive) {
-                        originLatLng = currentLocation
-                        originPlacePicker?.setText("Current location")
-                        if (destinationPlace != null) {
-                            updateRoute()
+                    // Update origin picker to show "Current location" if no custom origin is set
+                    if (originPlace == null && !navigationActive) {
+                        // If originLatLng is null or matches current location, update it
+                        if (originLatLng == null) {
+                            originLatLng = currentLocation
+                            originPlacePicker?.setText("Current location")
+                            if (destinationPlace != null) {
+                                updateRoute()
+                            }
+                        } else if (originLatLng == currentLocation || 
+                            (originLatLng != null && currentLocation != null &&
+                             haversineDistance(originLatLng!!.latitude, originLatLng!!.longitude,
+                                 currentLocation!!.latitude, currentLocation!!.longitude) < 0.1)) {
+                            // Origin is very close to current location - just update the text
+                            originPlacePicker?.setText("Current location")
                         }
                     }
                     // Update GPS status in top panel
@@ -2122,6 +2322,36 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
+        }
+    }
+
+    /**
+    * Pause real device location updates that feed the app/navigation.
+    * This cancels the locationJob that collects LocationTracker.metrics and
+    * removes the RoadSnappedLocationProvider listener if present.
+    */
+    private fun stopLocationTracking() {
+        try {
+            // Cancel the coroutine that collects LocationTracker metrics (if active)
+            if (locationJob != null) {
+                locationJob?.cancel()
+                locationJob = null
+                AppLogger.i("stopLocationTracking: locationJob cancelled (real location updates paused)")
+            } else {
+                AppLogger.i("stopLocationTracking: no active locationJob to cancel")
+            }
+
+            // Remove RoadSnapped listener if it was registered earlier (defensive)
+            if (::mRoadSnappedLocationProvider.isInitialized) {
+                try {
+                    mRoadSnappedLocationProvider.removeLocationListener(mLocationListener)
+                    AppLogger.i("stopLocationTracking: RoadSnappedLocationProvider listener removed")
+                } catch (e: Exception) {
+                    AppLogger.w("stopLocationTracking: failed to remove RoadSnapped listener: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            AppLogger.e("stopLocationTracking: error pausing location updates", e)
         }
     }
 

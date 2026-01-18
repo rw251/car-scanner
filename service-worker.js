@@ -1,4 +1,4 @@
-const CACHE_NAME = `obd-v2.0.76`;
+const CACHE_NAME = `obd-v2.0.77`;
 
 // Never cachs
 const nc = [/microsoft-identity-association/];

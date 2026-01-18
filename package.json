@@ -1,6 +1,6 @@
 {
   "name": "car-scanner-hooks",
-  "version": "2.0.76",
+  "version": "2.0.77",
   "private": true,
   "scripts": {
     "install-hook": "cp hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit",
