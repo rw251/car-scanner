@@ -163,22 +163,6 @@ class MainActivity : AppCompatActivity() {
         val powerLevels: List<Map<String, Any>> = emptyList()
     )
     
-    data class ChargingPoint(
-        val id: Int,
-        val title: String?,
-        val latitude: Double,
-        val longitude: Double,
-        val operatorId: Int?,
-        val statusTypeId: Int?,
-        val connections: List<Map<String, Any>> = emptyList(),
-        val operator: String = "Unknown",
-        val status: String = "Unknown",
-        val ccsPoints: Int = 0,
-        var distanceAlongRoute: Double = 0.0, // meters from route start
-        var deviationSeconds: Long? = null, // additional time vs direct route
-        var routeToChargerSeconds: Long? = null,
-        var routeFromChargerSeconds: Long? = null
-    )
     /**
      * Permission launcher for BLE and Location permissions.
      * Only called if permissions are not already granted.
@@ -2204,6 +2188,9 @@ class MainActivity : AppCompatActivity() {
             .filter { it.deviationSeconds != null && it.deviationSeconds!! < 12*60 }
             .take(3)
         currentDisplayedChargers = nextChargers
+        
+        // Update shared ChargerManager for Android Auto
+        ChargerManager.updateChargers(nextChargers)
         
         // Debug logging
         if (nextChargers.isNotEmpty()) {

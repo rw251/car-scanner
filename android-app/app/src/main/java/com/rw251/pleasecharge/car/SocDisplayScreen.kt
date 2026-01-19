@@ -12,8 +12,22 @@ import androidx.car.app.navigation.model.MessageInfo
 import androidx.car.app.navigation.model.NavigationTemplate
 import androidx.car.app.navigation.model.RoutingInfo
 import androidx.car.app.navigation.model.Step
+import androidx.car.app.navigation.model.TravelEstimate
+import androidx.car.app.navigation.model.PlaceListNavigationTemplate
 import androidx.car.app.model.CarText
+import androidx.car.app.model.CarColor
+import androidx.car.app.model.CarIcon
+import androidx.car.app.model.Distance
+import androidx.car.app.model.DistanceSpan
+import androidx.car.app.model.ItemList
+import androidx.car.app.model.Metadata
+import androidx.car.app.model.Place
+import androidx.car.app.model.PlaceMarker
+import androidx.car.app.model.Row
+import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
+import android.text.SpannableString
+import android.text.Spanned
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import com.google.android.libraries.mapsplatform.turnbyturn.model.NavInfo
@@ -21,6 +35,8 @@ import com.google.android.libraries.mapsplatform.turnbyturn.model.NavState
 import com.google.android.libraries.mapsplatform.turnbyturn.model.StepInfo
 import com.google.android.libraries.mapsplatform.turnbyturn.model.Maneuver as NavManeuver
 import com.rw251.pleasecharge.AppLogger
+import com.rw251.pleasecharge.ChargerManager
+import com.rw251.pleasecharge.ChargingPoint
 import com.rw251.pleasecharge.CommonBleListener
 import com.rw251.pleasecharge.CommonBleListener.Callbacks
 import com.rw251.pleasecharge.BleConnectionManager
@@ -37,8 +53,10 @@ import java.util.Locale
 class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLifecycleObserver {
     private var listener: BleObdManager.Listener? = null
     private var navInfo: NavInfo? = null
+    private var chargers: List<ChargingPoint> = emptyList()
     private var socPercent: String = "--%"
     private var navInfoJob: Job? = null
+    private var chargersJob: Job? = null
 
     init {
         lifecycle.addObserver(this)
@@ -47,6 +65,13 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
         navInfoJob = lifecycleScope.launch {
             NavigationSdkManager.navInfo.collect { info ->
                 navInfo = info
+                invalidate()
+            }
+        }
+        
+        chargersJob = lifecycleScope.launch {
+            ChargerManager.chargers.collect { updatedChargers ->
+                chargers = updatedChargers
                 invalidate()
             }
         }
@@ -74,6 +99,62 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
     override fun onGetTemplate(): Template {
         val navInfo = navInfo
         
+        // If we have chargers and navigation, show PlaceListNavigationTemplate
+        if (chargers.isNotEmpty() && navInfo?.navState == NavState.ENROUTE && navInfo.currentStep != null) {
+            val itemListBuilder = ItemList.Builder()
+            
+            chargers.take(3).forEach { charger ->
+                val distanceMeters = charger.distanceAlongRoute * 1609.34 // convert miles to meters
+                
+                val deviationText = charger.deviationSeconds?.let { dev ->
+                    if (dev > 0) {
+                        "+${dev / 60}m"
+                    } else {
+                        "0m"
+                    }
+                } ?: "0m"
+                
+                // Create SpannableString with DistanceSpan for the text
+                val text = "${charger.operator} • ${charger.ccsPoints} CCS"
+                val spannableText = SpannableString(text)
+                spannableText.setSpan(
+                    DistanceSpan.create(Distance.create(distanceMeters, Distance.UNIT_METERS)),
+                    0,
+                    text.length,
+                    Spanned.SPAN_INCLUSIVE_INCLUSIVE
+                )
+                
+                val row = Row.Builder()
+                    .setTitle(charger.title ?: "Unknown Charger")
+                    .addText(spannableText)
+                    .addText("$deviationText deviation")
+                    .setMetadata(
+                        androidx.car.app.model.Metadata.Builder()
+                            .setPlace(
+                                Place.Builder(
+                                    androidx.car.app.model.CarLocation.create(
+                                        charger.latitude,
+                                        charger.longitude
+                                    )
+                                ).setMarker(PlaceMarker.Builder().build()).build()
+                            )
+                            .build()
+                    )
+                    .build()
+                
+                itemListBuilder.addItem(row)
+            }
+
+            return PlaceListNavigationTemplate.Builder()
+                .setItemList(itemListBuilder.build())
+                .setHeaderAction(Action.BACK)
+                .setActionStrip(buildActionStrip())
+                .setMapActionStrip(buildMapActionStrip())
+                .setTitle("Upcoming Chargers")
+                .build()
+        }
+        
+        // Otherwise show regular navigation template
         return NavigationTemplate.Builder()
             .setNavigationInfo(
                 when (navInfo?.navState) {
@@ -83,17 +164,35 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
                     else -> buildMessage("Navigation", "Start navigation on phone")
                 }
             )
-            .setActionStrip(
-                ActionStrip.Builder()
-                    .addAction(Action.PAN)
-                    .addAction(
-                        Action.Builder()
-                            .setTitle("🔋 $socPercent")
-                            .build()
-                    )
-                    .build()
-            )
+            .setActionStrip(buildActionStrip())
+            .setMapActionStrip(buildMapActionStrip())
             .build()
+    }
+    
+    private fun buildActionStrip(): ActionStrip {
+        val builder = ActionStrip.Builder()
+            .addAction(Action.PAN)
+        
+        // Add SOC display
+        builder.addAction(
+            Action.Builder()
+                .setTitle("🔋 $socPercent")
+                .build()
+        )
+        
+        // No need for chargers button - they're shown in place list instead
+        
+        return builder.build()
+    }
+    
+    private fun buildMapActionStrip(): ActionStrip {
+        val builder = ActionStrip.Builder()
+            .addAction(Action.PAN)
+        
+        // MapActionStrip doesn't allow custom titles, only icons
+        // So we'll just use PAN action for now
+        
+        return builder.build()
     }
 
     private fun buildRouting(navInfo: NavInfo): RoutingInfo? {
@@ -215,5 +314,6 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
         super.onDestroy(owner)
         listener?.let { BleConnectionManager.removeListener(it) }
         navInfoJob?.cancel()
+        chargersJob?.cancel()
     }
 }
