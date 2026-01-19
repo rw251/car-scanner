@@ -2182,28 +2182,29 @@ class MainActivity : AppCompatActivity() {
     
     @SuppressLint("SetTextI18n")
     private fun updateChargerListDisplay() {
-        // Find the next 3 chargers after current position
+        // Find chargers after current position (removed take(3) limit for Android Auto)
         val nextChargers = allChargingPoints
             .filter { it.distanceAlongRoute >= currentLocationMeters }
             .filter { it.deviationSeconds != null && it.deviationSeconds!! < 12*60 }
-            .take(3)
-        currentDisplayedChargers = nextChargers
         
-        // Update shared ChargerManager for Android Auto
+        // For phone UI, take first 3
+        currentDisplayedChargers = nextChargers.take(3)
+        
+        // Update shared ChargerManager for Android Auto with ALL chargers
         ChargerManager.updateChargers(nextChargers)
         
         // Debug logging
         if (nextChargers.isNotEmpty()) {
-            AppLogger.d("updateChargerList: currentPos=${currentLocationMeters}m, showing ${nextChargers.size} of ${allChargingPoints.size} chargers")
-            nextChargers.forEachIndexed { idx, c ->
+            AppLogger.d("updateChargerList: currentPos=${currentLocationMeters}m, showing ${currentDisplayedChargers.size} of ${allChargingPoints.size} chargers on phone, ${nextChargers.size} in Android Auto")
+            nextChargers.take(5).forEachIndexed { idx, c ->
                 AppLogger.d("  [$idx] ${c.title}: ${c.distanceAlongRoute}m along route")
             }
         }
         
-        // Update UI for each charger slot
-        updateChargerSlot(0, nextChargers, binding.charger1Container)
-        updateChargerSlot(1, nextChargers, binding.charger2Container)
-        updateChargerSlot(2, nextChargers, binding.charger3Container)
+        // Update UI for each charger slot (phone shows only 3)
+        updateChargerSlot(0, currentDisplayedChargers, binding.charger1Container)
+        updateChargerSlot(1, currentDisplayedChargers, binding.charger2Container)
+        updateChargerSlot(2, currentDisplayedChargers, binding.charger3Container)
     }
     
     @SuppressLint("SetTextI18n")

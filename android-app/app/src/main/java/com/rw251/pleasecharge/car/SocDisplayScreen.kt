@@ -27,7 +27,10 @@ import androidx.car.app.model.Row
 import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import android.text.SpannableString
+import android.text.SpannableStringBuilder
 import android.text.Spanned
+import androidx.car.app.model.ListTemplate
+import androidx.car.app.navigation.model.MapWithContentTemplate
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import com.google.android.libraries.mapsplatform.turnbyturn.model.NavInfo
@@ -103,40 +106,51 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
         if (chargers.isNotEmpty() && navInfo?.navState == NavState.ENROUTE && navInfo.currentStep != null) {
             val itemListBuilder = ItemList.Builder()
             
-            chargers.take(3).forEach { charger ->
-                val distanceMeters = charger.distanceAlongRoute * 1609.34 // convert miles to meters
+            chargers.forEach { charger ->
                 
                 val deviationText = charger.deviationSeconds?.let { dev ->
                     if (dev > 0) {
-                        "+${dev / 60}m"
+                        "(+${dev / 60}m)"
                     } else {
-                        "0m"
+                        "(0m)"
                     }
-                } ?: "0m"
+                } ?: "(0m)"
                 
-                // Create SpannableString with DistanceSpan for the text
-                val text = "${charger.operator} • ${charger.ccsPoints} CCS"
-                val spannableText = SpannableString(text)
-                spannableText.setSpan(
-                    DistanceSpan.create(Distance.create(distanceMeters, Distance.UNIT_METERS)),
-                    0,
-                    text.length,
-                    Spanned.SPAN_INCLUSIVE_INCLUSIVE
-                )
+                // Create SpannableString with DistanceSpan for the title
+                val distanceMiles = charger.distanceAlongRoute / 1600
+                val spannableTitle = SpannableStringBuilder().apply {
+                    append(charger.ccsPoints.toString())
+                    append(" CCS")
+                    append(" ")
+                    append(deviationText)
+                    append(" ")
+
+                    // Put a 1-char placeholder where the host will render the distance.
+                    val start = length
+                    append(" ") // placeholder
+                    setSpan(
+                        DistanceSpan.create(Distance.create(distanceMiles, Distance.UNIT_MILES)),
+                        start,
+                        start + 1,
+                        Spanned.SPAN_INCLUSIVE_INCLUSIVE
+                    )
+                }
+                val icon = CarIcon.Builder(
+                    IconCompat.createWithResource(carContext, com.rw251.pleasecharge.R.drawable.icon_ionity)
+                ).build()
                 
                 val row = Row.Builder()
-                    .setTitle(charger.title ?: "Unknown Charger")
-                    .addText(spannableText)
-                    .addText("$deviationText deviation")
+                    .setTitle(spannableTitle)
+                    .setImage(icon)
                     .setMetadata(
-                        androidx.car.app.model.Metadata.Builder()
+                        Metadata.Builder()
                             .setPlace(
                                 Place.Builder(
                                     androidx.car.app.model.CarLocation.create(
                                         charger.latitude,
                                         charger.longitude
                                     )
-                                ).setMarker(PlaceMarker.Builder().build()).build()
+                                ).build()
                             )
                             .build()
                     )
@@ -145,12 +159,12 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
                 itemListBuilder.addItem(row)
             }
 
-            return PlaceListNavigationTemplate.Builder()
-                .setItemList(itemListBuilder.build())
-                .setHeaderAction(Action.BACK)
+            val list = ListTemplate.Builder()
+                .setSingleList(itemListBuilder.build())
+
+            return MapWithContentTemplate.Builder()
+                .setContentTemplate(list.build())
                 .setActionStrip(buildActionStrip())
-                .setMapActionStrip(buildMapActionStrip())
-                .setTitle("Upcoming Chargers")
                 .build()
         }
         
