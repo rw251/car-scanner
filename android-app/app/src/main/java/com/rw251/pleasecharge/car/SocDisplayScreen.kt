@@ -86,6 +86,11 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
             .setActionStrip(
                 ActionStrip.Builder()
                     .addAction(Action.PAN)
+                    .addAction(
+                        Action.Builder()
+                            .setTitle("🔋 $socPercent")
+                            .build()
+                    )
                     .build()
             )
             .build()
