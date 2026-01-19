@@ -86,6 +86,10 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice|location" />
 
+        <service
+            android:name=".navigation.NavigationUpdatesService"
+            android:exported="false" />
+
         <!-- Car App metadata -->
         <meta-data
             android:name="com.google.android.gms.car.application"

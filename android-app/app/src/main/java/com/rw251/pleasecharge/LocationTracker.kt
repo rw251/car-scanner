@@ -7,6 +7,8 @@ import android.location.Location
 import android.os.Looper
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.*
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.tasks.Tasks
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -14,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.lang.ref.WeakReference
 import kotlin.math.abs
 import kotlin.math.cos
@@ -357,4 +360,27 @@ object LocationTracker {
 
     private fun mpsToMph(mps: Double): Double = mps * 2.2369362920544
     private fun mphToMps(mph: Double): Double = mph * 0.44704
+
+    @SuppressLint("MissingPermission")
+    suspend fun getCurrentLocation(): LatLng? = withContext(Dispatchers.Default) {
+        // First try to get from current metrics
+        val currentMetrics = metrics.value
+        if (currentMetrics != null) {
+            return@withContext LatLng(currentMetrics.lat, currentMetrics.lon)
+        }
+
+        // Otherwise try to get last known location from FusedLocationProviderClient
+        try {
+            if (client != null) {
+                val location = Tasks.await(client!!.lastLocation)
+                if (location != null) {
+                    return@withContext LatLng(location.latitude, location.longitude)
+                }
+            }
+        } catch (e: Exception) {
+            AppLogger.e("Failed to get last known location: ${e.message}")
+        }
+
+        return@withContext null
+    }
 }

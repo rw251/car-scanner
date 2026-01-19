@@ -27,7 +27,7 @@ class PleaseChargeCarAppService : CarAppService() {
 }
 
 class PleaseChargeSession : Session() {
-    private var mapRenderer: SimpleMapRenderer? = null
+    private var mapRenderer: CarMapRenderer? = null
     
     override fun onCreateScreen(intent: Intent): Screen {
         android.util.Log.i("PleaseChargeSession", "onCreateScreen called")
@@ -42,23 +42,27 @@ class PleaseChargeSession : Session() {
         
         // Create mapRenderer here where carContext is guaranteed to be available
         if (mapRenderer == null) {
-            android.util.Log.i("PleaseChargeSession", "Creating SimpleMapRenderer")
-            mapRenderer = SimpleMapRenderer(lifecycle)
+            android.util.Log.i("PleaseChargeSession", "Creating CarMapRenderer")
+            AppLogger.i("PleaseChargeSession: Creating CarMapRenderer")
+            mapRenderer = CarMapRenderer(carContext, lifecycle)
         }
         
-        // Register the surface callback directly here instead of relying on lifecycle
-        android.util.Log.i("PleaseChargeSession", "Registering surface callback directly")
+        // Register the surface callback for map rendering
+        android.util.Log.i("PleaseChargeSession", "Registering surface callback")
         try {
             carContext.getCarService(androidx.car.app.AppManager::class.java)
-                .setSurfaceCallback(mapRenderer!!.surfaceCallback)
-            android.util.Log.i("PleaseChargeSession", "Surface callback registered successfully from Session")
+                .setSurfaceCallback(mapRenderer)
+            android.util.Log.i("PleaseChargeSession", "Surface callback registered successfully")
+            AppLogger.i("PleaseChargeSession: Surface callback registered successfully")
         } catch (e: SecurityException) {
             android.util.Log.w("PleaseChargeSession", "Surface callback not available: ${e.message}")
+            AppLogger.w("PleaseChargeSession: Surface callback not available: ${e.message}")
         } catch (e: Exception) {
             android.util.Log.e("PleaseChargeSession", "Failed to register surface callback: ${e.message}", e)
+            AppLogger.e("PleaseChargeSession: Failed to register surface callback", e)
         }
         
-        return SocDisplayScreen(carContext, mapRenderer!!)
+        return SocDisplayScreen(carContext)
     }
     
     private fun startBleForegroundService() {

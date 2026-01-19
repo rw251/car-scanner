@@ -13,7 +13,6 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.rw251.pleasecharge.CommonBleListener.Callbacks
 import com.rw251.pleasecharge.ble.BleObdManager
-import com.rw251.pleasecharge.car.TileCache
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -42,6 +41,7 @@ class BleForegroundService : Service() {
     }
 
     private var bleManager: BleObdManager? = null
+    private var bleListener: BleObdManager.Listener? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var locationJob: Job? = null
     private var bleTimeoutJob: Job? = null
@@ -91,25 +91,27 @@ class BleForegroundService : Service() {
         
         serviceScope.launch {
             // Ensure manager exists so BLE can persist
+            val listener = CommonBleListener(
+                tag = "BleForegroundService",
+                callbacks = Callbacks(
+                    onReady = { onBleConnectionChanged(true) },
+                    onSoc = { raw, pct, timestamp ->
+                        DataCapture.logSoc(raw, pct, timestamp)
+                    },
+                    onTemp = { celsius, timestamp ->
+                        DataCapture.logTemp(celsius, timestamp)
+                    },
+                    onStateChanged = { state ->
+                        AppLogger.i("BleForegroundService: BLE state changed to $state")
+                        val isConnected = state == BleObdManager.State.READY
+                        onBleConnectionChanged(isConnected)
+                    }
+                )
+            )
+            bleListener = listener
             val manager = BleConnectionManager.getOrCreateManager(
                 context = this@BleForegroundService,
-                listener = CommonBleListener(
-                    tag = "BleForegroundService",
-                    callbacks = Callbacks(
-                        onReady = { onBleConnectionChanged(true) },
-                        onSoc = { raw, pct, timestamp ->
-                            DataCapture.logSoc(raw, pct, timestamp)
-                        },
-                        onTemp = { celsius, timestamp ->
-                            DataCapture.logTemp(celsius, timestamp)
-                        },
-                        onStateChanged = { state ->
-                            AppLogger.i("BleForegroundService: BLE state changed to $state")
-                            val isConnected = state == BleObdManager.State.READY
-                            onBleConnectionChanged(isConnected)
-                        }
-                    )
-                ),
+                listener = listener,
                 updateListener = true, // Update listener to capture data
             )
             bleManager = manager
@@ -207,9 +209,6 @@ class BleForegroundService : Service() {
                         distanceMiles = it.distanceMiles,
                         timestamp = it.timestampMs
                     )
-                    
-                    // Preload map tiles around current location
-                    maybePreloadTiles(it.lat, it.lon)
                 }
             }
         }
@@ -221,30 +220,6 @@ class BleForegroundService : Service() {
         locationJob = null
         LocationTracker.stop()
         AppLogger.i("Location tracking stopped in foreground service")
-    }
-    
-    /**
-     * Preload map tiles around the current location if we've moved significantly.
-     * Uses a simple distance check to avoid excessive preloading.
-     */
-    private fun maybePreloadTiles(lat: Double, lon: Double) {
-        val lastLat = lastPreloadLat
-        val lastLon = lastPreloadLon
-        
-        // Calculate distance from last preload location
-        val shouldPreload = if (lastLat == null || lastLon == null) {
-            true  // First location, always preload
-        } else {
-            val distanceKm = haversineKm(lastLat, lastLon, lat, lon)
-            distanceKm >= preloadThreshold
-        }
-        
-        if (shouldPreload) {
-            lastPreloadLat = lat
-            lastPreloadLon = lon
-            TileCache.backgroundPreload(lat, lon)
-            AppLogger.d("Preloading tiles around $lat, $lon - ${TileCache.getCacheStats()}", "TileCache")
-        }
     }
     
     /**
@@ -273,8 +248,10 @@ class BleForegroundService : Service() {
     @android.annotation.SuppressLint("MissingPermission")
     private fun stopBleManager() {
         try {
+            bleListener?.let { BleConnectionManager.removeListener(it) }
             bleManager?.stop()
             bleManager = null
+            bleListener = null
             AppLogger.i("BleForegroundService: BLE manager stopped")
         } catch (e: Exception) {
             AppLogger.e("BleForegroundService: Error stopping BLE manager", e)

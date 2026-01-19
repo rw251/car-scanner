@@ -38,6 +38,7 @@ import com.google.android.libraries.navigation.RoadSnappedLocationProvider
 import com.google.android.libraries.navigation.SimulationOptions
 import com.google.android.libraries.navigation.CustomRoutesOptions
 import com.google.android.libraries.navigation.Waypoint
+import com.rw251.pleasecharge.navigation.NavigationSdkManager
 import kotlinx.coroutines.isActive
 import com.google.android.libraries.places.api.Places
 import com.google.android.libraries.places.api.model.Place
@@ -81,6 +82,7 @@ class MainActivity : AppCompatActivity() {
     private val viewModel: MainViewModel by viewModels()
 
     private var manager: BleObdManager? = null
+    private var bleListener: BleObdManager.Listener? = null
     private var locationJob: Job? = null
     private var durationJob: Job? = null
     // Removed BottomSheetBehavior since bottom panel is now static
@@ -288,6 +290,7 @@ class MainActivity : AppCompatActivity() {
             override fun onNavigatorReady(navigator: Navigator) {
                 displayMessage("Navigator ready.")
                 mNavigator = navigator
+                NavigationSdkManager.setNavigator(navigator, applicationContext)
 
                 // Set the travel mode.
                 mRoutingOptions = RoutingOptions().travelMode(RoutingOptions.TravelMode.DRIVING)
@@ -511,6 +514,8 @@ class MainActivity : AppCompatActivity() {
             currentLocation?.let { location ->
                 setLocationBias(com.google.android.libraries.places.api.model.CircularBounds.newInstance(location, 50000.0)) // 50km radius
             }
+            // Default to current location
+            setText("Current location")
             setOnPlaceSelectedListener(object : com.google.android.libraries.places.widget.listener.PlaceSelectionListener {
                 override fun onPlaceSelected(place: Place) {
                     originPlace = place
@@ -546,14 +551,50 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateRoute() {
+        // Ensure origin defaults to current location if not explicitly set
+        if (originPlace == null && originLatLng == null) {
+            // Try to use currentLocation first, then request it if unavailable
+            if (currentLocation != null) {
+                originLatLng = currentLocation
+                originPlacePicker?.setText("Current location")
+                AppLogger.i("updateRoute: Set origin to current location: $currentLocation")
+            } else {
+                AppLogger.w("updateRoute: No current location available yet, requesting location update")
+                // Request a location update and then proceed
+                lifecycleScope.launch {
+                    try {
+                        val location: com.google.android.gms.maps.model.LatLng? = LocationTracker.getCurrentLocation()
+                        if (location != null) {
+                            currentLocation = location
+                            originLatLng = location
+                            originPlacePicker?.setText("Current location")
+                            AppLogger.i("updateRoute: Got current location from tracker: $location")
+                            proceedWithRoute()
+                        } else {
+                            AppLogger.e("updateRoute: Could not get current location")
+                            displayMessage("Unable to determine current location. Please try again.")
+                        }
+                    } catch (e: Exception) {
+                        AppLogger.e("updateRoute: Error getting current location", e)
+                    }
+                    return@launch
+                }
+                return // Exit early, we'll call proceedWithRoute() once we have location
+            }
+        }
+        
+        proceedWithRoute()
+    }
+    
+    private fun proceedWithRoute() {
         val origin = originLatLng ?: currentLocation
         val destination = destinationPlace?.location
-        AppLogger.i("updateRoute: origin=${origin?.latitude},${origin?.longitude} destination=${destination?.latitude},${destination?.longitude}")
+        AppLogger.i("proceedWithRoute: origin=${origin?.latitude},${origin?.longitude} destination=${destination?.latitude},${destination?.longitude}")
 
         if (origin != null && destination != null) {
             calculateAndDisplayRoute(origin, destination)
         } else {
-            AppLogger.w("updateRoute: Cannot update route - origin or destination null")
+            AppLogger.w("proceedWithRoute: Cannot update route - origin or destination null")
         }
     }
 
@@ -621,6 +662,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    @SuppressLint("MissingPermission")
     private fun displayRouteInfo(origin: LatLng, destination: LatLng) {
         // Calculate distance and duration estimate using Haversine formula and average speed
         val distance = haversineDistance(origin.latitude, origin.longitude, destination.latitude, destination.longitude)
@@ -638,15 +680,21 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.routeInfoPanel.visibility = View.VISIBLE
-        binding.startNavigationButton.setOnClickListener @androidx.annotation.RequiresPermission(
-            allOf = [android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION]
-        ) {
+        binding.startNavigationButton.setOnClickListener {
+            if (!LocationTracker.hasPermission(this)) {
+                displayMessage("Location permission is required to start navigation.")
+                return@setOnClickListener
+            }
             startNavigation(destination, simulate = false)
         }
         // Show fake start only in debug builds
         if (BuildConfig.DEBUG) {
             binding.fakeStartNavigationButton.visibility = View.VISIBLE
             binding.fakeStartNavigationButton.setOnClickListener {
+                if (!LocationTracker.hasPermission(this)) {
+                    displayMessage("Location permission is required to start navigation.")
+                    return@setOnClickListener
+                }
                 startNavigation(destination, simulate = true)
             }
         } else {
@@ -720,6 +768,7 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             AppLogger.e("Failed to stop navigation", e)
         }
+        NavigationSdkManager.clearNavInfo()
         // Clear chargers and hide list
         allChargingPoints = emptyList()
         allFetchedChargers = emptyList()
@@ -862,19 +911,22 @@ class MainActivity : AppCompatActivity() {
             when (code) {
                 Navigator.RouteStatus.OK -> {
                     AppLogger.i("navigateToPlace: RouteStatus.OK")
-                    // Register some listeners for navigation events.
-                    registerNavigationListeners()
-
+                    
                     displayMessage("Route calculated successfully.")
-                    if (BuildConfig.DEBUG && simulate) {
-                        AppLogger.i("navigateToPlace: Starting location simulation at 15x speed")
-                        navigator
-                            .simulator
-                            .simulateLocationsAlongExistingRoute(
-                                SimulationOptions().speedMultiplier(5f))
-                    }
-                    // Start guidance
+                    
+                    // Start guidance first
                     navigator.startGuidance()
+                    
+                    if (BuildConfig.DEBUG && simulate) {
+                        AppLogger.i("navigateToPlace: Starting location simulation at 5x speed")
+                        navigator.simulator.simulateLocationsAlongExistingRoute(
+                            SimulationOptions().speedMultiplier(5f))
+                        // For simulation, we'll use simulated location listener
+                        registerSimulatedLocationListener()
+                    } else {
+                        // For real navigation, register road-snapped location provider
+                        registerNavigationListeners()
+                    }
                     
                     // Register route change and arrival listeners
                     registerRouteAndArrivalListeners()
@@ -2408,9 +2460,10 @@ class MainActivity : AppCompatActivity() {
     @RequiresPermission(allOf = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT])
     private fun startBleManager() {
         if (manager == null) {
+            bleListener = createBleListener()
             manager = BleConnectionManager.getOrCreateManager(
                 context = this,
-                listener = createBleListener()
+                listener = bleListener!!
             )
         }
         // Foreground service already started in onCreate - just start the BLE manager
@@ -2479,6 +2532,7 @@ class MainActivity : AppCompatActivity() {
         locationJob?.cancel()
         stopDurationTimer()
         LocationTracker.stop()
+        bleListener?.let { BleConnectionManager.removeListener(it) }
         super.onDestroy()
     }
 
