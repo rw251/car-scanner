@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Journey Analyzer</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        header {
+            background: #16213e;
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+            border-bottom: 2px solid #0f3460;
+        }
+        
+        h1 {
+            font-size: 1.4rem;
+            color: #e94560;
+        }
+        
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        
+        label {
+            font-size: 0.9rem;
+            color: #aaa;
+        }
+        
+        select, input[type="file"] {
+            background: #0f3460;
+            border: 1px solid #e94560;
+            color: #eee;
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 0.9rem;
+            cursor: pointer;
+        }
+        
+        select:focus, input:focus {
+            outline: none;
+            border-color: #ff6b6b;
+        }
+        
+        input[type="number"] {
+            background: #0f3460;
+            border: 1px solid #e94560;
+            color: #eee;
+            padding: 4px 6px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+        
+        .soc-calc {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.85rem;
+            color: #aaa;
+            background: rgba(15, 52, 96, 0.5);
+            padding: 5px 10px;
+            border-radius: 5px;
+        }
+        
+        button {
+            background: #e94560;
+            border: none;
+            color: #fff;
+            padding: 8px 16px;
+            border-radius: 5px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        button:hover {
+            background: #ff6b6b;
+        }
+        
+        button.toggle {
+            background: #0f3460;
+            border: 1px solid #e94560;
+        }
+        
+        button.toggle.active {
+            background: #e94560;
+        }
+        
+        .stats {
+            display: flex;
+            gap: 20px;
+            margin-left: auto;
+            flex-wrap: wrap;
+        }
+        
+        .stat {
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 1.3rem;
+            font-weight: bold;
+            color: #e94560;
+        }
+        
+        .stat-label {
+            font-size: 0.75rem;
+            color: #888;
+            text-transform: uppercase;
+        }
+        
+        #map {
+            flex: 1;
+            width: 100%;
+        }
+        
+        .leaflet-popup-content-wrapper {
+            background: #16213e;
+            color: #eee;
+            border-radius: 8px;
+            pointer-events: none;
+        }
+        
+        .leaflet-popup-tip {
+            background: #16213e;
+        }
+        
+        .leaflet-popup {
+            pointer-events: none;
+        }
+        
+        .popup-content {
+            font-size: 0.85rem;
+            line-height: 1.5;
+        }
+        
+        .popup-content strong {
+            color: #e94560;
+        }
+        
+        .dropzone {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(22, 33, 62, 0.98);
+            padding: 60px 80px;
+            border-radius: 20px;
+            border: 3px dashed #e94560;
+            text-align: center;
+            z-index: 2000;
+        }
+        
+        .dropzone h2 {
+            color: #e94560;
+            margin-bottom: 15px;
+        }
+        
+        .dropzone p {
+            color: #888;
+            margin-bottom: 20px;
+        }
+        
+        .hidden {
+            display: none !important;
+        }
+        
+        .marker-start {
+            background: #22c55e;
+            border: 3px solid #fff;
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+        }
+        
+        .marker-end {
+            background: #ef4444;
+            border: 3px solid #fff;
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+        }
+        
+        .legend {
+            position: absolute;
+            bottom: 30px;
+            right: 20px;
+            background: rgba(22, 33, 62, 0.95);
+            padding: 12px 16px;
+            border-radius: 8px;
+            z-index: 1000;
+            border: 1px solid #0f3460;
+        }
+        
+        .legend-title {
+            font-size: 0.8rem;
+            color: #888;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+        
+        .legend-gradient {
+            width: 150px;
+            height: 12px;
+            border-radius: 4px;
+            margin-bottom: 5px;
+        }
+        
+        .legend-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            color: #aaa;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🚗 Journey Analyzer</h1>
+        <div class="controls">
+            <label for="fileInput">Load CSV:</label>
+            <input type="file" id="fileInput" accept=".csv">
+            
+            <label for="journeySelect">Journey:</label>
+            <select id="journeySelect" disabled>
+                <option value="">-- Select Journey --</option>
+            </select>
+            
+            <button id="resetZoom" title="Reset view to fit journey">⟲ Reset View</button>
+            
+            <button id="colorToggle" class="toggle active" title="Toggle color mode">🚀 Speed</button>
+            
+            <span class="soc-calc">
+                <label>SOC = (raw -</label>
+                <input type="number" id="socOffset" value="30" step="1" style="width: 50px;">
+                <label>) /</label>
+                <input type="number" id="socDivisor" value="9.3" step="0.1" style="width: 55px;">
+            </span>
+        </div>
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-value" id="statDistance">--</div>
+                <div class="stat-label">Distance (mi)</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="statDuration">--</div>
+                <div class="stat-label">Duration</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="statSocStart">--</div>
+                <div class="stat-label">SOC Start</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="statSocEnd">--</div>
+                <div class="stat-label">SOC End</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="statSocUsed">--</div>
+                <div class="stat-label">SOC Used</div>
+            </div>
+        </div>
+    </header>
+    
+    <div id="map"></div>
+    
+    <div class="legend" id="legend">
+        <div class="legend-title" id="legendTitle">Speed</div>
+        <div class="legend-gradient" id="legendGradient"></div>
+        <div class="legend-labels">
+            <span id="legendMin">0 mph</span>
+            <span id="legendMax">60+ mph</span>
+        </div>
+    </div>
+    
+    <div class="dropzone" id="dropzone">
+        <h2>📂 Load Vehicle Data</h2>
+        <p>Drag & drop your vehicle_data.csv here<br>or use the file picker above</p>
+    </div>
+
+    <script>
+        // Initialize map
+        const map = L.map('map').setView([53.45, -2.6], 12);
+        
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
+        
+        let journeys = [];
+        let currentLayers = [];
+        let currentJourneyIdx = null;
+        let currentBounds = null;
+        let colorMode = 'speed'; // 'speed' or 'battery'
+        
+        const fileInput = document.getElementById('fileInput');
+        const journeySelect = document.getElementById('journeySelect');
+        const dropzone = document.getElementById('dropzone');
+        const resetZoomBtn = document.getElementById('resetZoom');
+        const colorToggle = document.getElementById('colorToggle');
+        const legend = document.getElementById('legend');
+        
+        // Color functions
+        function getSpeedColor(speed) {
+            // Green (0 mph) -> Yellow (30 mph) -> Red (60+ mph)
+            const minSpeed = 0;
+            const maxSpeed = 60;
+            const normalized = Math.min(1, Math.max(0, (speed - minSpeed) / (maxSpeed - minSpeed)));
+            
+            // HSL: 120 (green) -> 60 (yellow) -> 0 (red)
+            const hue = 120 - (normalized * 120);
+            return `hsl(${hue}, 80%, 50%)`;
+        }
+        
+        function getBatteryColor(soc) {
+            // Red (low battery) -> Yellow -> Green (high battery)
+            if (soc === null) return '#888';
+            const minSoc = 0;
+            const maxSoc = 100;
+            const normalized = Math.min(1, Math.max(0, (soc - minSoc) / (maxSoc - minSoc)));
+            
+            // HSL: 0 (red) -> 60 (yellow) -> 120 (green)
+            const hue = normalized * 120;
+            return `hsl(${hue}, 80%, 50%)`;
+        }
+        
+        function updateLegend() {
+            const gradient = document.getElementById('legendGradient');
+            const title = document.getElementById('legendTitle');
+            const minLabel = document.getElementById('legendMin');
+            const maxLabel = document.getElementById('legendMax');
+            
+            if (colorMode === 'speed') {
+                title.textContent = 'Speed';
+                gradient.style.background = 'linear-gradient(to right, hsl(120, 80%, 50%), hsl(60, 80%, 50%), hsl(0, 80%, 50%))';
+                minLabel.textContent = '0 mph';
+                maxLabel.textContent = '60+ mph';
+            } else {
+                title.textContent = 'Battery SOC';
+                gradient.style.background = 'linear-gradient(to right, hsl(0, 80%, 50%), hsl(60, 80%, 50%), hsl(120, 80%, 50%))';
+                minLabel.textContent = '0%';
+                maxLabel.textContent = '100%';
+            }
+        }
+        
+        // Toggle color mode
+        colorToggle.addEventListener('click', () => {
+            colorMode = colorMode === 'speed' ? 'battery' : 'speed';
+            colorToggle.textContent = colorMode === 'speed' ? '🚀 Speed' : '🔋 Battery';
+            updateLegend();
+            if (currentJourneyIdx !== null) {
+                displayJourney(currentJourneyIdx);
+            }
+        });
+        
+        // Reset zoom
+        resetZoomBtn.addEventListener('click', () => {
+            if (currentBounds) {
+                map.fitBounds(currentBounds, { padding: [50, 50] });
+            }
+        });
+        
+        // File handling
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files[0]) {
+                loadFile(e.target.files[0]);
+            }
+        });
+        
+        // Drag and drop
+        document.body.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('hidden');
+        });
+        
+        dropzone.addEventListener('dragleave', () => {
+            if (journeys.length > 0) dropzone.classList.add('hidden');
+        });
+        
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            if (e.dataTransfer.files[0]) {
+                loadFile(e.dataTransfer.files[0]);
+            }
+        });
+        
+        function loadFile(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                parseCSV(e.target.result);
+                dropzone.classList.add('hidden');
+            };
+            reader.readAsText(file);
+        }
+        
+        // SOC calculation inputs
+        const socOffsetInput = document.getElementById('socOffset');
+        const socDivisorInput = document.getElementById('socDivisor');
+        let rawCsvText = null;
+        
+        // Calculate SOC percentage from raw value
+        function calculateSoc(soc_raw) {
+            const offset = parseFloat(socOffsetInput.value) || 30;
+            const divisor = parseFloat(socDivisorInput.value) || 9.3;
+            return (soc_raw - offset) / divisor;
+        }
+        
+        // Recalculate and redisplay when SOC params change
+        socOffsetInput.addEventListener('change', () => {
+            if (rawCsvText) {
+                parseCSV(rawCsvText);
+            }
+        });
+        socDivisorInput.addEventListener('change', () => {
+            if (rawCsvText) {
+                parseCSV(rawCsvText);
+            }
+        });
+        
+        function parseCSV(csvText) {
+            rawCsvText = csvText; // Store for recalculation
+            const lines = csvText.trim().split('\n');
+            const header = lines[0].split(',');
+            
+            // Parse all rows into unified data points
+            const dataPoints = [];
+            let lastSocRaw = null;
+            let lastTemp = null;
+            
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',');
+                const timestamp = new Date(values[0]);
+                const soc_raw = values[1] ? parseFloat(values[1]) : null;
+                const soc_pct = values[2] ? parseFloat(values[2]) : null;
+                const temp = values[3] ? parseFloat(values[3]) : null;
+                const speed = values[4] ? parseFloat(values[4]) : null;
+                const distance = values[5] ? parseFloat(values[5]) : null;
+                const lat = values[6] ? parseFloat(values[6]) : null;
+                const lon = values[7] ? parseFloat(values[7]) : null;
+                
+                // Track latest SOC raw value and temp
+                if (soc_raw !== null) lastSocRaw = soc_raw;
+                if (temp !== null) lastTemp = temp;
+                
+                // Only include rows with location data
+                if (lat !== null && lon !== null) {
+                    // Calculate SOC from raw value using formula
+                    const calculatedSoc = lastSocRaw !== null ? calculateSoc(lastSocRaw) : null;
+                    
+                    dataPoints.push({
+                        timestamp,
+                        lat,
+                        lon,
+                        speed: speed || 0,
+                        distance: distance || 0,
+                        soc: calculatedSoc,
+                        socRaw: lastSocRaw,
+                        temp: lastTemp
+                    });
+                }
+            }
+            
+            // Split into journeys based on time gaps (> 60 seconds = new journey)
+            const GAP_THRESHOLD = 60000; // 60 seconds in ms
+            const MIN_JOURNEY_POINTS = 2; // Minimum points to count as a journey
+            journeys = [];
+            let currentJourney = [];
+            
+            for (let i = 0; i < dataPoints.length; i++) {
+                if (currentJourney.length === 0) {
+                    currentJourney.push(dataPoints[i]);
+                } else {
+                    const timeDiff = dataPoints[i].timestamp - currentJourney[currentJourney.length - 1].timestamp;
+                    if (timeDiff > GAP_THRESHOLD) {
+                        // End current journey if it has enough points
+                        if (currentJourney.length >= MIN_JOURNEY_POINTS) {
+                            journeys.push(currentJourney);
+                        }
+                        currentJourney = [dataPoints[i]];
+                    } else {
+                        currentJourney.push(dataPoints[i]);
+                    }
+                }
+            }
+            
+            // Don't forget the last journey
+            if (currentJourney.length >= MIN_JOURNEY_POINTS) {
+                journeys.push(currentJourney);
+            }
+            
+            // Populate dropdown
+            journeySelect.innerHTML = '<option value="">-- Select Journey --</option>';
+            journeys.forEach((journey, idx) => {
+                const start = journey[0].timestamp;
+                const end = journey[journey.length - 1].timestamp;
+                const duration = formatDuration(end - start);
+                const date = start.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+                const time = start.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+                
+                const option = document.createElement('option');
+                option.value = idx;
+                option.textContent = `${date} ${time} (${duration}, ${journey.length} pts)`;
+                journeySelect.appendChild(option);
+            });
+            
+            journeySelect.disabled = false;
+            updateLegend();
+            
+            // Preserve previously selected journey, or select first one
+            const previousIdx = currentJourneyIdx;
+            if (previousIdx !== null && previousIdx < journeys.length) {
+                journeySelect.value = previousIdx.toString();
+                displayJourney(previousIdx);
+            } else if (journeys.length > 0) {
+                journeySelect.value = '0';
+                displayJourney(0);
+            }
+        }
+        
+        journeySelect.addEventListener('change', (e) => {
+            if (e.target.value !== '') {
+                displayJourney(parseInt(e.target.value));
+            }
+        });
+        
+        // Calculate distance between two GPS points in miles using Haversine formula
+        function haversineDistance(lat1, lon1, lat2, lon2) {
+            const R = 3958.8; // Earth's radius in miles
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        }
+        
+        // Filter and interpolate GPS data for bad readings
+        function filterGPSData(journey) {
+            if (journey.length < 3) return journey;
+            
+            const MAX_PLAUSIBLE_SPEED = 100; // mph - above this, GPS is clearly wrong
+            const MIN_MOVEMENT_THRESHOLD = 0.0005; // ~2.6 feet - below this, consider stationary
+            const CONSTANT_SPEED_WINDOW = 4; // number of points to check for suspicious constant speed
+            const CONSTANT_SPEED_VARIANCE = 0.01; // mph - if variance is below this, it's a stuck filter
+            
+            // First pass: calculate GPS-derived speed for all points
+            const annotated = journey.map((point, i) => {
+                const result = { 
+                    ...point, 
+                    isGood: true, 
+                    gpsSpeed: null,
+                    originalSpeed: point.speed,
+                    badReason: null
+                };
+                
+                if (i > 0) {
+                    const prev = journey[i - 1];
+                    const distance = haversineDistance(prev.lat, prev.lon, point.lat, point.lon);
+                    const timeDiff = (point.timestamp - prev.timestamp) / 1000 / 3600; // hours
+                    
+                    if (timeDiff > 0) {
+                        result.gpsSpeed = distance / timeDiff; // mph from GPS movement
+                        
+                        // Mark as bad if GPS shows impossibly high speed (GPS jump)
+                        if (result.gpsSpeed > MAX_PLAUSIBLE_SPEED) {
+                            result.isGood = false;
+                            result.badReason = 'gps_jump';
+                        }
+                        
+                        // Mark as bad if GPS shows no movement (frozen GPS)
+                        if (distance < MIN_MOVEMENT_THRESHOLD) {
+                            result.isGood = false;
+                            result.badReason = 'gps_frozen';
+                        }
+                    }
+                }
+                
+                return result;
+            });
+            
+            // Second pass: detect stuck speed filter (constant reported speed but GPS shows movement)
+            // This includes both stuck at 0 mph and stuck at any constant value
+            for (let i = CONSTANT_SPEED_WINDOW; i < annotated.length; i++) {
+                const window = annotated.slice(i - CONSTANT_SPEED_WINDOW, i);
+                const reportedSpeeds = window.map(p => p.originalSpeed);
+                const avgReported = reportedSpeeds.reduce((a, b) => a + b, 0) / reportedSpeeds.length;
+                const maxDiff = Math.max(...reportedSpeeds.map(s => Math.abs(s - avgReported)));
+                
+                // Get GPS speeds for comparison
+                const gpsSpeedsInWindow = window.map(p => p.gpsSpeed).filter(s => s !== null && s < MAX_PLAUSIBLE_SPEED);
+                const avgGpsSpeed = gpsSpeedsInWindow.length > 0 
+                    ? gpsSpeedsInWindow.reduce((a, b) => a + b, 0) / gpsSpeedsInWindow.length 
+                    : 0;
+                
+                // Case 1: Speed stuck at 0 but GPS shows movement (> 5 mph)
+                const stuckAtZero = avgReported < 1 && avgGpsSpeed > 5;
+                
+                // Case 2: Speed stuck at constant non-zero value but GPS shows significantly different
+                const stuckAtConstant = avgReported > 1 && maxDiff < CONSTANT_SPEED_VARIANCE && 
+                    (avgGpsSpeed > avgReported * 2 || avgGpsSpeed > avgReported + 10);
+                
+                if (stuckAtZero || stuckAtConstant) {
+                    // Use GPS speed instead
+                    window.forEach(p => {
+                        if (p.gpsSpeed !== null && p.gpsSpeed < MAX_PLAUSIBLE_SPEED) {
+                            p.speed = p.gpsSpeed;
+                            p.badReason = stuckAtZero ? 'stuck_at_zero' : 'stuck_filter';
+                            p.isGood = true; // GPS is actually good, just reported speed was wrong
+                        }
+                    });
+                }
+            }
+            
+            // Third pass: interpolate for genuinely bad GPS points (jumps and freezes)
+            let lastGoodIdx = -1;
+            for (let i = 0; i < annotated.length; i++) {
+                if (annotated[i].isGood) {
+                    // Interpolate any bad points between last good and current
+                    if (lastGoodIdx >= 0 && i - lastGoodIdx > 1) {
+                        const startSpeed = annotated[lastGoodIdx].speed;
+                        const endSpeed = annotated[i].speed;
+                        
+                        for (let j = lastGoodIdx + 1; j < i; j++) {
+                            const ratio = (j - lastGoodIdx) / (i - lastGoodIdx);
+                            annotated[j].speed = startSpeed + ratio * (endSpeed - startSpeed);
+                            annotated[j].interpolated = true;
+                        }
+                    }
+                    lastGoodIdx = i;
+                }
+            }
+            
+            // Handle trailing bad points
+            if (lastGoodIdx >= 0 && lastGoodIdx < annotated.length - 1) {
+                const lastGoodSpeed = annotated[lastGoodIdx].speed;
+                for (let j = lastGoodIdx + 1; j < annotated.length; j++) {
+                    if (!annotated[j].isGood) {
+                        annotated[j].speed = lastGoodSpeed;
+                        annotated[j].interpolated = true;
+                    }
+                }
+            }
+            
+            return annotated;
+        }
+        
+        function displayJourney(idx) {
+            currentJourneyIdx = idx;
+            
+            // Clear existing layers
+            currentLayers.forEach(layer => map.removeLayer(layer));
+            currentLayers = [];
+            
+            const rawJourney = journeys[idx];
+            if (!rawJourney || rawJourney.length === 0) return;
+            
+            // Apply GPS filtering
+            const journey = filterGPSData(rawJourney);
+            
+            // Create colored polyline segments
+            for (let i = 0; i < journey.length - 1; i++) {
+                const p1 = journey[i];
+                const p2 = journey[i + 1];
+                
+                const color = colorMode === 'speed' 
+                    ? getSpeedColor(p1.speed) 
+                    : getBatteryColor(p1.soc);
+                
+                const segment = L.polyline([[p1.lat, p1.lon], [p2.lat, p2.lon]], {
+                    color: color,
+                    weight: 5,
+                    opacity: 0.9
+                }).addTo(map);
+                currentLayers.push(segment);
+            }
+            
+            // Add invisible hover zones for each point (large radius for easy hovering)
+            journey.forEach((point, i) => {
+                const isStart = i === 0;
+                const isEnd = i === journey.length - 1;
+                
+                // Determine if this point was corrected
+                const wasCorrected = point.badReason === 'stuck_filter' || point.badReason === 'stuck_at_zero' || point.interpolated;
+                
+                // Large invisible circle for hover detection
+                const hoverZone = L.circleMarker([point.lat, point.lon], {
+                    radius: 20,
+                    fillColor: 'transparent',
+                    color: 'transparent',
+                    weight: 0,
+                    fillOpacity: 0
+                }).addTo(map);
+                
+                // Popup content
+                const time = point.timestamp.toLocaleTimeString('en-GB', { 
+                    hour: '2-digit', minute: '2-digit', second: '2-digit' 
+                });
+                
+                let speedText = `${point.speed.toFixed(1)} mph`;
+                if (point.badReason === 'stuck_filter' || point.badReason === 'stuck_at_zero') {
+                    speedText = `<span style="color: #4caf50;">${point.speed.toFixed(1)} mph</span>`;
+                    const reasonText = point.badReason === 'stuck_at_zero' ? 'reported 0' : 'filter was stuck';
+                    speedText += `<br><small style="color: #999;">Corrected from ${point.originalSpeed.toFixed(1)} mph (${reasonText})</small>`;
+                } else if (point.interpolated) {
+                    speedText = `<span style="color: #ff9800;">${point.speed.toFixed(1)} mph (interpolated)</span>`;
+                    const reasons = {
+                        'gps_jump': 'GPS jumped',
+                        'gps_frozen': 'GPS frozen'
+                    };
+                    if (point.badReason) {
+                        speedText += `<br><small style="color: #999;">Reason: ${reasons[point.badReason] || point.badReason}</small>`;
+                    }
+                }
+                
+                const popupContent = `
+                    <div class="popup-content">
+                        <strong>${isStart ? '🟢 Start' : isEnd ? '🔴 End' : '📍 Point ' + (i + 1)}</strong><br>
+                        Time: ${time}<br>
+                        SOC: <strong>${point.soc !== null ? point.soc.toFixed(1) + '%' : '--'}</strong>${point.socRaw !== null ? ` <small style="color: #999;">(raw: ${point.socRaw})</small>` : ''}<br>
+                        Temp: <strong>${point.temp ? point.temp.toFixed(1) + '°C' : '--'}</strong><br>
+                        Speed: ${speedText}
+                    </div>
+                `;
+                
+                hoverZone.bindPopup(popupContent, {
+                    closeButton: false,
+                    offset: [0, -10]
+                });
+                hoverZone.on('mouseover', function() { this.openPopup(); });
+                hoverZone.on('mouseout', function() { this.closePopup(); });
+                
+                currentLayers.push(hoverZone);
+            });
+            
+            // Add visible markers for start and end only
+            const startIcon = L.divIcon({
+                className: 'marker-start',
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            });
+            const endIcon = L.divIcon({
+                className: 'marker-end',
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            });
+            
+            const startMarker = L.marker([journey[0].lat, journey[0].lon], { icon: startIcon }).addTo(map);
+            const endMarker = L.marker([journey[journey.length-1].lat, journey[journey.length-1].lon], { icon: endIcon }).addTo(map);
+            currentLayers.push(startMarker, endMarker);
+            
+            // Calculate and store bounds for reset
+            const coords = journey.map(p => [p.lat, p.lon]);
+            currentBounds = L.latLngBounds(coords);
+            
+            // Fit map to journey
+            map.fitBounds(currentBounds, { padding: [50, 50] });
+            
+            // Update stats
+            updateStats(journey);
+        }
+        
+        function updateStats(journey) {
+            const start = journey[0];
+            const end = journey[journey.length - 1];
+            
+            // Duration
+            const duration = end.timestamp - start.timestamp;
+            document.getElementById('statDuration').textContent = formatDuration(duration);
+            
+            // Distance - sum up all distances
+            const totalDistance = journey.reduce((sum, p) => sum + (p.distance || 0), 0);
+            document.getElementById('statDistance').textContent = totalDistance.toFixed(2);
+            
+            // SOC
+            const socStart = start.soc;
+            const socEnd = end.soc;
+            document.getElementById('statSocStart').textContent = socStart ? socStart.toFixed(1) + '%' : '--';
+            document.getElementById('statSocEnd').textContent = socEnd ? socEnd.toFixed(1) + '%' : '--';
+            
+            if (socStart && socEnd) {
+                const socUsed = socStart - socEnd;
+                document.getElementById('statSocUsed').textContent = socUsed.toFixed(1) + '%';
+            } else {
+                document.getElementById('statSocUsed').textContent = '--';
+            }
+        }
+        
+        function formatDuration(ms) {
+            const seconds = Math.floor(ms / 1000);
+            const minutes = Math.floor(seconds / 60);
+            const hours = Math.floor(minutes / 60);
+            
+            if (hours > 0) {
+                return `${hours}h ${minutes % 60}m`;
+            } else if (minutes > 0) {
+                return `${minutes}m ${seconds % 60}s`;
+            } else {
+                return `${seconds}s`;
+            }
+        }
+        
+        // Initialize legend
+        updateLegend();
+    </script>
+</body>
+</html>
