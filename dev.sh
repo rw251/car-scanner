@@ -392,11 +392,29 @@ export_logs() {
 
     echo "📂 Pulling files to $out_dir"
     
-    # Use exec-out for more reliable binary-safe transfer
-    $ADB exec-out run-as "$app_pkg" cat files/app_log.txt > "$local_log" 2>/dev/null || rm -f "$local_log"
-    $ADB exec-out run-as "$app_pkg" cat files/vehicle_data.csv > "$local_csv" 2>/dev/null || rm -f "$local_csv"
-    $ADB exec-out run-as "$app_pkg" cat files/app_log.txt.old > "$local_log_old" 2>/dev/null || rm -f "$local_log_old"
-    $ADB exec-out run-as "$app_pkg" cat files/vehicle_data.csv.old > "$local_csv_old" 2>/dev/null || rm -f "$local_csv_old"
+    # Discover weekly-rotated filenames
+    file_list=$($ADB exec-out run-as "$app_pkg" ls files 2>/dev/null || true)
+    latest_log=$(echo "$file_list" | tr ' ' '\n' | grep -E '^app_log_.*\.txt$' | sort | tail -n 1)
+    latest_csv=$(echo "$file_list" | tr ' ' '\n' | grep -E '^vehicle_data_.*\.csv$' | sort | tail -n 1)
+    latest_log_old="${latest_log}.old"
+    latest_csv_old="${latest_csv}.old"
+
+    # Use exec-out for binary-safe transfer; fallback to legacy names if weekly not found
+    if [[ -n "$latest_log" ]]; then
+        $ADB exec-out run-as "$app_pkg" cat "files/$latest_log" > "$local_log" 2>/dev/null || rm -f "$local_log"
+        $ADB exec-out run-as "$app_pkg" cat "files/$latest_log_old" > "$local_log_old" 2>/dev/null || rm -f "$local_log_old"
+    else
+        $ADB exec-out run-as "$app_pkg" cat files/app_log.txt > "$local_log" 2>/dev/null || rm -f "$local_log"
+        $ADB exec-out run-as "$app_pkg" cat files/app_log.txt.old > "$local_log_old" 2>/dev/null || rm -f "$local_log_old"
+    fi
+
+    if [[ -n "$latest_csv" ]]; then
+        $ADB exec-out run-as "$app_pkg" cat "files/$latest_csv" > "$local_csv" 2>/dev/null || rm -f "$local_csv"
+        $ADB exec-out run-as "$app_pkg" cat "files/$latest_csv_old" > "$local_csv_old" 2>/dev/null || rm -f "$local_csv_old"
+    else
+        $ADB exec-out run-as "$app_pkg" cat files/vehicle_data.csv > "$local_csv" 2>/dev/null || rm -f "$local_csv"
+        $ADB exec-out run-as "$app_pkg" cat files/vehicle_data.csv.old > "$local_csv_old" 2>/dev/null || rm -f "$local_csv_old"
+    fi
 
     echo ""
     local found_any=false

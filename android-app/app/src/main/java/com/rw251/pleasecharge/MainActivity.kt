@@ -26,6 +26,7 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.io.File
 import androidx.core.graphics.toColorInt
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -2536,52 +2537,64 @@ class MainActivity : AppCompatActivity() {
 
     private fun exportDataFiles() {
         try {
-            val logPath = AppLogger.getLogFilePath()
-            val csvPath = DataCapture.getCsvFilePath()
-            val files = mutableListOf<android.net.Uri>()
+            val filesDir = applicationContext.filesDir
 
-            if (logPath != null) {
-                val logFile = java.io.File(logPath)
-                if (logFile.exists() && logFile.length() > 0) {
-                    files.add(
+            val csvFiles = filesDir?.listFiles { _, name ->
+                name.startsWith("vehicle_data_") && name.endsWith(".csv")
+            }?.toList().orEmpty()
+
+            val latestLog = filesDir?.listFiles { _, name ->
+                name.startsWith("app_log_") && name.endsWith(".txt")
+            }?.maxByOrNull { it.name }
+
+            if (csvFiles.isEmpty() && latestLog == null) {
+                viewModel.appendLog("No data files to export")
+                return
+            }
+
+            val uris = mutableListOf<android.net.Uri>()
+            val authority = "${applicationContext.packageName}.fileprovider"
+
+            csvFiles.forEach { file ->
+                if (file.exists() && file.length() > 0) {
+                    uris.add(
                         androidx.core.content.FileProvider.getUriForFile(
                             this,
-                            "${applicationContext.packageName}.fileprovider",
-                            logFile
+                            authority,
+                            file
                         )
                     )
                 }
             }
 
-            if (csvPath != null) {
-                val csvFile = java.io.File(csvPath)
-                if (csvFile.exists() && csvFile.length() > 0) {
-                    files.add(
+            latestLog?.let { file ->
+                if (file.exists() && file.length() > 0) {
+                    uris.add(
                         androidx.core.content.FileProvider.getUriForFile(
                             this,
-                            "${applicationContext.packageName}.fileprovider",
-                            csvFile
+                            authority,
+                            file
                         )
                     )
                 }
             }
 
-            if (files.isEmpty()) {
+            if (uris.isEmpty()) {
                 viewModel.appendLog("No data files to export")
                 return
             }
 
             val shareIntent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
                 type = "*/*"
-                putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(files))
-                putExtra(Intent.EXTRA_SUBJECT, "PleaseCharge Data Export")
-                putExtra(Intent.EXTRA_TEXT, "Exported logs and vehicle data from PleaseCharge app.")
+                putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+                putExtra(Intent.EXTRA_SUBJECT, "PleaseCharge data export (CSV + latest log)")
+                putExtra(Intent.EXTRA_TEXT, "All CSV data and the most recent log.")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
 
             startActivity(Intent.createChooser(shareIntent, "Export data via"))
-            AppLogger.i("Data files exported: ${files.size} files")
-            viewModel.appendLog("Exported ${files.size} file(s)")
+            AppLogger.i("Data files exported: ${csvFiles.size} CSV(s) + latest log: ${latestLog?.name ?: "none"}")
+            viewModel.appendLog("Exported ${csvFiles.size} CSV(s) + latest log")
         } catch (e: Exception) {
             AppLogger.e("Failed to export data files", e)
             viewModel.appendLog("Export failed: ${e.message}")
