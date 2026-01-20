@@ -237,7 +237,9 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
         val maneuverType = mapManeuver(stepInfo.maneuver)
         if (maneuverType != null) {
             val maneuverBuilder = Maneuver.Builder(maneuverType)
-            if (isRoundabout(maneuverType)) {
+            // Only set roundaboutExitNumber for roundabout ENTER and ENTER_AND_EXIT types
+            // EXIT types don't support this property
+            if (isRoundaboutWithExitNumber(maneuverType)) {
                 maneuverBuilder.setRoundaboutExitNumber(1)
             }
             builder.setManeuver(maneuverBuilder.build())
@@ -320,6 +322,13 @@ class SocDisplayScreen(carContext: CarContext) : Screen(carContext), DefaultLife
         Maneuver.TYPE_ROUNDABOUT_ENTER_CCW,
         Maneuver.TYPE_ROUNDABOUT_EXIT_CW,
         Maneuver.TYPE_ROUNDABOUT_EXIT_CCW,
+        Maneuver.TYPE_ROUNDABOUT_ENTER_AND_EXIT_CW,
+        Maneuver.TYPE_ROUNDABOUT_ENTER_AND_EXIT_CCW
+    )
+
+    private fun isRoundaboutWithExitNumber(type: Int): Boolean = type in listOf(
+        Maneuver.TYPE_ROUNDABOUT_ENTER_CW,
+        Maneuver.TYPE_ROUNDABOUT_ENTER_CCW,
         Maneuver.TYPE_ROUNDABOUT_ENTER_AND_EXIT_CW,
         Maneuver.TYPE_ROUNDABOUT_ENTER_AND_EXIT_CCW
     )
