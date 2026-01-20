@@ -3,66 +3,91 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:fitsSystemWindows="true"
-    android:paddingLeft="16dp"
-    android:paddingRight="16dp"
-    android:paddingTop="32dp"
-    android:paddingBottom="16dp">
+    android:fitsSystemWindows="true">
 
-    <!-- Title -->
-    <TextView
-        android:id="@+id/tv_title"
-        android:layout_width="0dp"
+    <!-- Header with proper safe area handling -->
+    <LinearLayout
+        android:id="@+id/header_container"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Application Logs"
-        android:textSize="20sp"
-        android:textStyle="bold"
+        android:orientation="vertical"
+        android:paddingLeft="16dp"
+        android:paddingRight="16dp"
+        android:paddingBottom="8dp"
+        android:background="@android:color/white"
+        android:elevation="4dp"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toStartOf="@id/btn_close" />
+        app:layout_constraintEnd_toEndOf="parent">
 
-    <!-- Close Button -->
-    <Button
-        android:id="@+id/btn_close"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Close"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        <!-- Top Row: Title and Close Button -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
 
-    <!-- Action Button -->
-    <Button
-        android:id="@+id/btn_clear_logs"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="Clear Logs"
-        app:layout_constraintTop_toBottomOf="@id/tv_title"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+            <TextView
+                android:id="@+id/tv_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Application Logs"
+                android:textSize="20sp"
+                android:textStyle="bold" />
 
-    <!-- Log File Info -->
-    <TextView
-        android:id="@+id/tv_log_info"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="Log file: --"
-        android:textSize="12sp"
-        android:textColor="#666666"
-        app:layout_constraintTop_toBottomOf="@id/btn_clear_logs"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+            <Button
+                android:id="@+id/btn_close"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Close" />
+        </LinearLayout>
+
+        <!-- Action Buttons Row -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <Button
+                android:id="@+id/btn_clear_logs"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="8dp"
+                android:text="Clear Logs" />
+
+            <Button
+                android:id="@+id/btn_load_more"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Load More"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <!-- Log File Info -->
+        <TextView
+            android:id="@+id/tv_log_info"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Log file: --"
+            android:textSize="12sp"
+            android:textColor="#666666" />
+    </LinearLayout>
 
     <!-- Scrollable Log Panel -->
     <ScrollView
         android:id="@+id/log_scroll"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:layout_marginTop="8dp"
         android:fillViewport="true"
         android:background="#F5F5F5"
-        app:layout_constraintTop_toBottomOf="@id/tv_log_info"
+        android:padding="16dp"
+        app:layout_constraintTop_toBottomOf="@id/header_container"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">

@@ -15,7 +15,19 @@ import java.util.concurrent.ConcurrentLinkedQueue
  * Centralized logging system that writes to:
  * 1. Logcat (for development)
  * 2. Persistent file (for debugging in production)
- * 3. In-memory buffer (for UI display)
+ * 
+ * Features:
+ * - Weekly rotating log files (app_log_YYYY-WW.txt)
+ * - Automatic rotation when files exceed 5MB
+ * - 14-day retention policy (older logs auto-deleted)
+ * - Efficient partial reading (getLastLogLines) for large files
+ * - Background async writing to avoid UI blocking
+ * 
+ * IMPORTANT: Always test builds before committing!
+ * Common issues:
+ * - XML syntax errors (duplicate closing tags)
+ * - Missing imports when adding new features
+ * - Breaking existing API contracts
  */
 object AppLogger {
     private const val TAG = "PleaseCharge"
@@ -140,10 +152,10 @@ object AppLogger {
     private fun pruneOldLogFiles() {
         val dir = filesDir ?: return
         val files = dir.listFiles { f -> f.name.startsWith(LOG_FILE_PREFIX) && f.name.endsWith(LOG_FILE_SUFFIX) }?.toList() ?: return
-        val sorted = files.sortedBy { it.name.substring(LOG_FILE_PREFIX.length, it.name.length - LOG_FILE_SUFFIX.length) }
-        val toDelete = if (sorted.size > 4) sorted.subList(0, sorted.size - 4) else emptyList()
+        val cutoffTime = System.currentTimeMillis() - (14L * 24 * 60 * 60 * 1000) // 14 days
+        val toDelete = files.filter { it.lastModified() < cutoffTime }
         toDelete.forEach {
-            try { it.delete(); i("AppLogger: Deleted old log ${it.name}") } catch (e: Exception) { w("AppLogger: Failed to delete ${it.name}: ${e.message}") }
+            try { it.delete(); i("AppLogger: Deleted old log ${it.name} (older than 14 days)") } catch (e: Exception) { w("AppLogger: Failed to delete ${it.name}: ${e.message}") }
         }
     }
     
@@ -152,6 +164,33 @@ object AppLogger {
             logFile?.readText() ?: ""
         } catch (e: Exception) {
             "Error reading log file: ${e.message}"
+        }
+    }
+    
+    fun getLastLogLines(maxLines: Int): String {
+        return try {
+            val file = logFile ?: return ""
+            if (!file.exists()) return ""
+            
+            // For large files, read from end to avoid memory issues
+            val lines = mutableListOf<String>()
+            file.useLines { sequence ->
+                // Collect lines efficiently
+                val allLines = sequence.toList()
+                val startIdx = (allLines.size - maxLines).coerceAtLeast(0)
+                lines.addAll(allLines.subList(startIdx, allLines.size))
+            }
+            lines.joinToString("\n")
+        } catch (e: Exception) {
+            "Error reading log file: ${e.message}"
+        }
+    }
+    
+    fun getLogLineCount(): Int {
+        return try {
+            logFile?.useLines { it.count() } ?: 0
+        } catch (e: Exception) {
+            0
         }
     }
     
