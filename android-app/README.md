@@ -34,13 +34,11 @@ The key idea: a single BLE connection (managed by `BleConnectionManager`/`BleObd
 - `PleaseChargeCarAppService.kt` — Entry point for the car app; resets service state and starts the foreground service so GPS/BLE run even without the phone UI.
 - `PleaseChargeSession` (in same file) — Creates the main screen and registers the surface renderer.
 - `SocDisplayScreen.kt` — NavigationTemplate-based screen that shows SOC/temp/distance/avg speed; hooks into shared BLE/location streams and drives the renderer panel state.
-- `SimpleMapRenderer.kt` — Low-level surface renderer drawing OSM tiles + location dot and panel overlay.
-- `TileCache.kt` — Shared in-memory cache/downloader for OSM tiles; supports prefetching and background preload.
 
 ## Data flow summary
 
 1. **BLE**: `BleForegroundService` starts → `BleConnectionManager` creates `BleObdManager` → events fan out via `CommonBleListener` to phone UI and car UI; service logs SOC/temp to CSV.
-2. **Location**: `BleForegroundService` (and optionally phone UI) start `LocationTracker` → emits metrics → phone UI updates map/stats; car UI updates `SimpleMapRenderer`; service logs to CSV and preloads tiles.
+2. **Location**: `BleForegroundService` (and optionally phone UI) start `LocationTracker` → emits metrics → phone UI updates map/stats; service logs to CSV and preloads tiles.
 3. **Status sharing**: `ServiceStatus` flows expose service running/timeout info to the phone UI for display.
 4. **Logging/Export**: `AppLogger` writes logs; `DataCapture` writes CSV; `MainActivity` shares/export files; `LogViewerActivity` reads logs.
 

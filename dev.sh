@@ -353,7 +353,7 @@ export_logs() {
     fi
     
     echo ""
-    echo "📋 Exporting logs and data from device..."
+    echo "📋 Exporting logs from device..."
     echo "========================================"
     
     # Try both debug and release packages
@@ -386,18 +386,14 @@ export_logs() {
     local out_dir="$ROOT_DIR/export"
     mkdir -p "$out_dir"
     local local_log="$out_dir/app_log.txt"
-    local local_csv="$out_dir/vehicle_data.csv"
     local local_log_old="$out_dir/app_log.txt.old"
-    local local_csv_old="$out_dir/vehicle_data.csv.old"
 
     echo "📂 Pulling files to $out_dir"
     
     # Discover weekly-rotated filenames
     file_list=$($ADB exec-out run-as "$app_pkg" ls files 2>/dev/null || true)
     latest_log=$(echo "$file_list" | tr ' ' '\n' | grep -E '^app_log_.*\.txt$' | sort | tail -n 1)
-    latest_csv=$(echo "$file_list" | tr ' ' '\n' | grep -E '^vehicle_data_.*\.csv$' | sort | tail -n 1)
     latest_log_old="${latest_log}.old"
-    latest_csv_old="${latest_csv}.old"
 
     # Use exec-out for binary-safe transfer; fallback to legacy names if weekly not found
     if [[ -n "$latest_log" ]]; then
@@ -408,14 +404,6 @@ export_logs() {
         $ADB exec-out run-as "$app_pkg" cat files/app_log.txt.old > "$local_log_old" 2>/dev/null || rm -f "$local_log_old"
     fi
 
-    if [[ -n "$latest_csv" ]]; then
-        $ADB exec-out run-as "$app_pkg" cat "files/$latest_csv" > "$local_csv" 2>/dev/null || rm -f "$local_csv"
-        $ADB exec-out run-as "$app_pkg" cat "files/$latest_csv_old" > "$local_csv_old" 2>/dev/null || rm -f "$local_csv_old"
-    else
-        $ADB exec-out run-as "$app_pkg" cat files/vehicle_data.csv > "$local_csv" 2>/dev/null || rm -f "$local_csv"
-        $ADB exec-out run-as "$app_pkg" cat files/vehicle_data.csv.old > "$local_csv_old" 2>/dev/null || rm -f "$local_csv_old"
-    fi
-
     echo ""
     local found_any=false
     if [ -s "$local_log" ]; then
@@ -424,18 +412,8 @@ export_logs() {
     else
         echo "⚠️  No app log found"
     fi
-    if [ -s "$local_csv" ]; then
-        echo "✅ CSV data exported: $local_csv (size: $(du -h "$local_csv" | cut -f1))"
-        found_any=true
-    else
-        echo "⚠️  No CSV data found"
-    fi
     if [ -s "$local_log_old" ]; then
         echo "ℹ️  Old app log: $local_log_old (size: $(du -h "$local_log_old" | cut -f1))"
-        found_any=true
-    fi
-    if [ -s "$local_csv_old" ]; then
-        echo "ℹ️  Old CSV data: $local_csv_old (size: $(du -h "$local_csv_old" | cut -f1))"
         found_any=true
     fi
     
@@ -448,13 +426,124 @@ export_logs() {
     fi
 
     echo ""
-    echo "📄 Log tail (last 20 lines):"
+    echo "📄 Log tail (last 10 lines):"
     echo "----------------------------------------"
     if [ -f "$local_log" ]; then
-        tail -20 "$local_log"
+        tail -10 "$local_log"
     else
         echo "(no log file - app may not have been launched yet)"
     fi
+    return 0
+}
+
+# Function to extract CSV files from both debug and release apps
+extract_csvs() {
+    if ! ensure_device_connected; then
+        echo "❌ Cannot extract CSVs without device connection"
+        return 1
+    fi
+    
+    echo ""
+    echo "📊 Extracting CSV files from all apps..."
+    echo "========================================"
+    
+    local debug_pkg="com.rw251.pleasecharge.debug"
+    local release_pkg="com.rw251.pleasecharge"
+    local out_dir="$ROOT_DIR/export"
+    mkdir -p "$out_dir"
+    
+    local found_any=false
+    
+    # Process debug app (uses internal storage accessible via run-as)
+    if $ADB shell pm list packages | grep -q "^package:$debug_pkg$"; then
+        echo ""
+        echo "📱 Checking debug app: $debug_pkg"
+        if $ADB shell "run-as $debug_pkg test -d files && echo exists" 2>/dev/null | grep -q "exists"; then
+            file_list=$($ADB exec-out run-as "$debug_pkg" ls files 2>/dev/null || true)
+            
+            # Find all CSV files
+            csv_files=$(echo "$file_list" | tr ' ' '\n' | grep -E '\.csv$')
+            
+            if [ -n "$csv_files" ]; then
+                echo "✅ Found CSV files in debug app"
+                while IFS= read -r csv_file; do
+                    if [ -n "$csv_file" ]; then
+                        local_path="$out_dir/debug_${csv_file}"
+                        $ADB exec-out run-as "$debug_pkg" cat "files/$csv_file" > "$local_path" 2>/dev/null
+                        if [ -s "$local_path" ]; then
+                            echo "   ✓ $csv_file → $local_path ($(du -h "$local_path" | cut -f1))"
+                            found_any=true
+                        else
+                            rm -f "$local_path"
+                        fi
+                    fi
+                done <<< "$csv_files"
+            else
+                echo "   ⚠️  No CSV files found in debug app"
+            fi
+        else
+            echo "   ⚠️  Debug app has no data directory"
+        fi
+    else
+        echo ""
+        echo "⚠️  Debug app not installed"
+    fi
+    
+    # Process release app (uses external storage - Downloads folder)
+    if $ADB shell pm list packages | grep -q "^package:$release_pkg$"; then
+        echo ""
+        echo "📱 Checking release app: $release_pkg"
+        echo "   (Release app exports to Downloads folder)"
+        
+        # Find CSV files in Downloads that match our app's pattern
+        csv_list=$($ADB shell "ls /sdcard/Download/*.csv 2>/dev/null" | tr '\r' ' ')
+        
+        if [ -n "$csv_list" ]; then
+            # Filter for files that look like they're from our app
+            app_csv_files=$(echo "$csv_list" | tr ' ' '\n' | grep -E "(vehicle_data|app_log).*\.(csv|txt)$")
+            
+            if [ -n "$app_csv_files" ]; then
+                echo "✅ Found CSV/log files in Downloads"
+                while IFS= read -r full_path; do
+                    if [ -n "$full_path" ]; then
+                        filename=$(basename "$full_path")
+                        local_path="$out_dir/release_${filename}"
+                        $ADB pull "$full_path" "$local_path" > /dev/null 2>&1
+                        if [ -s "$local_path" ]; then
+                            echo "   ✓ $filename → $local_path ($(du -h "$local_path" | cut -f1))"
+                            found_any=true
+                        else
+                            rm -f "$local_path"
+                        fi
+                    fi
+                done <<< "$app_csv_files"
+            else
+                echo "   ⚠️  No vehicle_data or app_log CSV files found in Downloads"
+            fi
+        else
+            echo "   ⚠️  No CSV files found in Downloads folder"
+        fi
+    else
+        echo ""
+        echo "⚠️  Release app not installed"
+    fi
+    
+    echo ""
+    if [ "$found_any" = true ]; then
+        echo "✅ CSV extraction complete!"
+        echo "📂 Files saved to: $out_dir"
+        echo ""
+        echo "📋 Extracted files:"
+        ls -lh "$out_dir"/*.csv "$out_dir"/*.txt 2>/dev/null | awk '{print "   " $9 " (" $5 ")"}'
+    else
+        echo "❌ No CSV files found in any app"
+        echo ""
+        echo "💡 Possible reasons:"
+        echo "   • App was just installed and hasn't created CSV files yet"
+        echo "   • App needs to be launched to initialize data collection"
+        echo "   • Try running the app and then extract again"
+    fi
+    
     return 0
 }
 
@@ -467,11 +556,12 @@ show_menu() {
     echo "3) Build production release (Play Store)"
     echo "4) Export logs & data from phone"
     echo "5) Fast deploy (incremental build + restart)"
-    echo "6) List connected devices"
-    echo "7) Restart ADB server"
-    echo "8) Exit"
+    echo "6) Extract CSV files only (debug + release apps)"
+    echo "7) List connected devices"
+    echo "8) Restart ADB server"
+    echo "9) Exit"
     echo ""
-    read -p "Enter choice [1-8]: " choice
+    read -p "Enter choice [1-9]: " choice
 
     case $choice in
         1)
@@ -490,17 +580,20 @@ show_menu() {
             fast_deploy
             ;;
         6)
-            list_devices
+            extract_csvs
             ;;
         7)
-            restart_adb
+            list_devices
             ;;
         8)
+            restart_adb
+            ;;
+        9)
             echo "👋 Goodbye!"
             exit 0
             ;;
         *)
-            echo "❌ Invalid option. Please choose 1-8."
+            echo "❌ Invalid option. Please choose 1-9."
             return 1
             ;;
     esac
